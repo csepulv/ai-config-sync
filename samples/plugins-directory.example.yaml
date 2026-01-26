@@ -1,0 +1,35 @@
+# Plugins Directory - Example Configuration
+#
+# This file defines which Claude Code plugins to install.
+#
+# Usage:
+#   ai-config-sync plugins           # Install missing plugins
+#   ai-config-sync plugins --clean   # Also uninstall unlisted plugins
+#   ai-config-sync plugins --dry-run # Preview changes
+
+plugins:
+  # Claude Official Plugins
+  - name: superpowers
+    marketplace: claude-plugins-official
+    category: core
+
+  - name: context7
+    marketplace: claude-plugins-official
+    category: core
+
+  - name: code-review
+    marketplace: claude-plugins-official
+    category: core
+
+# Field descriptions:
+#
+# name: Plugin name as registered in the marketplace
+#
+# marketplace: The marketplace where the plugin is published
+#   - claude-plugins-official: Anthropic's official plugins
+#   - claude-code-workflows: Community workflow plugins
+#
+# category: Optional, for your own organization
+#   - core: Essential plugins
+#   - lsp: Language Server Protocol plugins
+#   - workflows: Workflow automation plugins

@@ -1,0 +1,61 @@
+# Skills Directory - Example Configuration
+#
+# This file defines which skills to fetch from GitHub and sync to your AI tools.
+#
+# Usage:
+#   ai-config-sync fetch         # Fetch all skills from GitHub
+#   ai-config-sync fetch <name>  # Fetch specific skill
+#   ai-config-sync sync          # Sync skills to Claude, Codex, Gemini
+#   ai-config-sync catalog       # Regenerate skill catalog
+
+skills:
+  # Custom skills (source: custom) are managed locally, not fetched
+  - name: my-custom-skill
+    source: custom
+    category: primary
+    disable-model-invocation: false
+    last_fetched: null
+    last_sync: null
+
+  # Skills from Anthropic's official repo
+  - name: mcp-builder
+    source: https://github.com/anthropics/skills/tree/main/skills/mcp-builder
+    category: contextual
+    disable-model-invocation: true
+    last_fetched: null
+    last_sync: null
+
+  - name: frontend-design
+    source: https://github.com/anthropics/skills/tree/main/skills/frontend-design
+    category: contextual
+    disable-model-invocation: true
+    last_fetched: null
+    last_sync: null
+
+  # Pin to specific commit for stability
+  - name: debugging-strategies
+    source: https://github.com/wshobson/agents/tree/abc123def/plugins/developer-essentials/skills/debugging-strategies
+    category: contextual
+    disable-model-invocation: true
+    last_fetched: null
+    last_sync: null
+
+# Field descriptions:
+#
+# name: Skill directory name (used for /skill-name invocation)
+#
+# source: Either "custom" for local skills, or GitHub URL
+#         Supports both /tree/ and /blob/ URLs
+#         Can pin to branch, tag, or commit SHA
+#
+# category: How the skill is classified
+#   - primary: Core skills, always available
+#   - contextual: Loaded based on context
+#   - experimental: Testing/development skills
+#
+# disable-model-invocation: If true, prevents the model from auto-invoking
+#                           User must explicitly request the skill
+#
+# last_fetched: Timestamp of last GitHub fetch (auto-updated)
+#
+# last_sync: Timestamp of last sync to targets (auto-updated)

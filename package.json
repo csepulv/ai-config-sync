@@ -1,0 +1,35 @@
+{
+  "name": "ai-config-sync",
+  "version": "1.0.0",
+  "description": "CLI tool for managing AI assistant skills and plugins across Claude, Codex, and Gemini",
+  "type": "module",
+  "bin": {
+    "ai-config-sync": "./ai-config-sync.js"
+  },
+  "scripts": {
+    "start": "node ai-config-sync.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+  },
+  "keywords": [
+    "claude",
+    "codex",
+    "gemini",
+    "ai",
+    "skills",
+    "plugins",
+    "cli"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^8.2.0",
+    "js-yaml": "^4.1.0",
+    "yargs": "^17.7.2"
+  },
+  "devDependencies": {
+    "jest": "^30.2.0"
+  }
+}
