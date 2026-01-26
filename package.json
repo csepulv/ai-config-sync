@@ -3,12 +3,20 @@
   "version": "1.0.0",
   "description": "CLI tool for managing AI assistant skills and plugins across Claude, Codex, and Gemini",
   "type": "module",
+  "main": "ai-config-sync.js",
   "bin": {
     "ai-config-sync": "./ai-config-sync.js"
   },
+  "files": [
+    "ai-config-sync.js",
+    "lib/",
+    "samples/",
+    "README.md"
+  ],
   "scripts": {
     "start": "node ai-config-sync.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "prepublishOnly": "npm test"
   },
   "keywords": [
     "claude",
@@ -17,10 +25,20 @@
     "ai",
     "skills",
     "plugins",
-    "cli"
+    "cli",
+    "anthropic",
+    "llm"
   ],
-  "author": "",
+  "author": "Christian Sepulveda <csepulv>",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/csepulv/ai-config-sync.git"
+  },
+  "bugs": {
+    "url": "https://github.com/csepulv/ai-config-sync/issues"
+  },
+  "homepage": "https://github.com/csepulv/ai-config-sync#readme",
   "engines": {
     "node": ">=18.0.0"
   },
