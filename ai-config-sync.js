@@ -2,7 +2,6 @@
 
 import fs from 'fs/promises';
 import path from 'path';
-import os from 'os';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { confirm, checkbox, input } from '@inquirer/prompts';
@@ -10,10 +9,10 @@ import { confirm, checkbox, input } from '@inquirer/prompts';
 import {
   loadConfig,
   saveConfig,
-  resolveConfigDir,
+  expandPath,
   CONFIG_FILE
 } from './lib/config.js';
-import { fetchAllSkills, addSkill, isGhCliAvailable } from './lib/fetch.js';
+import { fetchAllSkills, addSkill, copyCustomSkills, isGhCliAvailable } from './lib/fetch.js';
 import { syncAll } from './lib/sync.js';
 import { syncPlugins } from './lib/plugins.js';
 import { generateCatalog } from './lib/catalog.js';
@@ -38,27 +37,40 @@ async function initCommand() {
     }
   }
 
-  // Get config path
-  const defaultPath = '~/workspace/ai-config';
-  const configPath = await input({
-    message: 'Where would you like to store your AI config?',
-    default: defaultPath
+  // Get source directory path
+  const defaultSourcePath = '~/workspace/ai-config';
+  const sourcePath = await input({
+    message: 'Where would you like to store your AI config source?',
+    default: defaultSourcePath
   });
 
-  // Expand path
-  const expandedPath = configPath.startsWith('~/')
-    ? path.join(os.homedir(), configPath.slice(2))
-    : configPath;
+  // Get config directory path (where merged skills go)
+  const defaultConfigPath = sourcePath;
+  const configPath = await input({
+    message: 'Where should merged/fetched skills be stored? (config-directory)',
+    default: defaultConfigPath
+  });
+
+  // Expand paths
+  const expandedSourcePath = expandPath(sourcePath);
+  const expandedConfigPath = expandPath(configPath);
 
   console.log('\nCreating directory structure...');
 
-  // Create directories
-  await fs.mkdir(expandedPath, { recursive: true });
-  await fs.mkdir(path.join(expandedPath, 'skills'), { recursive: true });
-  console.log(`  ✓ Created ${expandedPath}`);
+  // Create source directory
+  await fs.mkdir(expandedSourcePath, { recursive: true });
+  await fs.mkdir(path.join(expandedSourcePath, 'skills'), { recursive: true });
+  console.log(`  ✓ Created source directory: ${expandedSourcePath}`);
+
+  // Create config directory (if different)
+  if (expandedConfigPath !== expandedSourcePath) {
+    await fs.mkdir(expandedConfigPath, { recursive: true });
+    await fs.mkdir(path.join(expandedConfigPath, 'skills'), { recursive: true });
+    console.log(`  ✓ Created config directory: ${expandedConfigPath}`);
+  }
 
   // Create skills-directory.yaml if it doesn't exist
-  const skillsDirectoryPath = path.join(expandedPath, 'skills-directory.yaml');
+  const skillsDirectoryPath = path.join(expandedSourcePath, 'skills-directory.yaml');
   try {
     await fs.access(skillsDirectoryPath);
     console.log(`  ✓ skills-directory.yaml already exists`);
@@ -74,7 +86,7 @@ skills: []
   }
 
   // Create plugins-directory.yaml if it doesn't exist
-  const pluginsDirectoryPath = path.join(expandedPath, 'plugins-directory.yaml');
+  const pluginsDirectoryPath = path.join(expandedSourcePath, 'plugins-directory.yaml');
   try {
     await fs.access(pluginsDirectoryPath);
     console.log(`  ✓ plugins-directory.yaml already exists`);
@@ -88,20 +100,34 @@ plugins: []
     console.log(`  ✓ Created plugins-directory.yaml`);
   }
 
-  // Save config
-  const config = { config_path: configPath };
+  // Save config with new structure
+  const config = {
+    'source-directories': [sourcePath],
+    'config-directory': configPath
+  };
   await saveConfig(config);
   console.log(`\nSaved config to ${CONFIG_FILE}`);
 
   console.log("\nRun 'ai-config-sync' to get started!\n");
 }
 
+// ============ Helper: Get Config ============
+
+async function getConfig(overridePath) {
+  const config = await loadConfig();
+  if (!config) {
+    throw new Error(`Config not found at ${CONFIG_FILE}. Run 'ai-config-sync init' first.`);
+  }
+  // TODO: Support --config override for config-directory
+  return config;
+}
+
 // ============ Check Command ============
 
-async function checkCommand(configDir) {
+async function checkCommand(config) {
   console.log('Checking AI config status...\n');
 
-  const results = await runAllChecks(configDir);
+  const results = await runAllChecks(config);
 
   for (const result of results) {
     const icon = result.status === 'ok' ? '✓' : result.status === 'needs-action' ? '⚠' : '✗';
@@ -121,10 +147,10 @@ async function checkCommand(configDir) {
 
 // ============ Interactive Mode ============
 
-async function interactiveMode(configDir) {
+async function interactiveMode(config) {
   console.log('Checking AI config status...\n');
 
-  const results = await runAllChecks(configDir);
+  const results = await runAllChecks(config);
 
   for (const result of results) {
     const icon = result.status === 'ok' ? '✓' : result.status === 'needs-action' ? '⚠' : '✗';
@@ -180,26 +206,30 @@ async function interactiveMode(configDir) {
 
     switch (action) {
       case 'plugin-sync':
-        await syncPlugins(configDir, { clean: false });
+        await syncPlugins(config, { clean: false });
         break;
       case 'skill-fetch':
         if (result.skillNames?.length > 0) {
           for (const skillName of result.skillNames) {
-            await fetchAllSkills(configDir, { skillName });
+            await fetchAllSkills(config, { skillName });
           }
         } else {
-          await fetchAllSkills(configDir);
+          await fetchAllSkills(config);
         }
         break;
       case 'generate-catalog':
-        await generateCatalog(configDir);
+        // Ensure custom skills are copied before generating catalog
+        await copyCustomSkills(config);
+        await generateCatalog(config);
         break;
       case 'skill-sync':
+        // Ensure custom skills are copied before syncing
+        await copyCustomSkills(config);
         const syncAll_ = await confirm({
           message: 'Sync skills to all targets?',
           default: true
         });
-        await syncAll(configDir, { targets: syncAll_ ? 'all' : 'claude' });
+        await syncAll(config, { targets: syncAll_ ? 'all' : 'claude' });
         break;
     }
   }
@@ -209,7 +239,7 @@ async function interactiveMode(configDir) {
 
 // ============ Fetch Command ============
 
-async function fetchCommand(configDir, skillName) {
+async function fetchCommand(config, skillName) {
   if (isGhCliAvailable()) {
     console.log('Using authenticated GitHub CLI (gh)\n');
   } else {
@@ -217,34 +247,38 @@ async function fetchCommand(configDir, skillName) {
     console.log('Tip: Install gh CLI and run "gh auth login" for higher rate limits\n');
   }
 
-  await fetchAllSkills(configDir, { skillName });
+  await fetchAllSkills(config, { skillName });
   console.log('\nDone!');
 }
 
 // ============ Add Command ============
 
-async function addCommand(configDir, url, category) {
-  await addSkill(url, category, configDir);
+async function addCommand(config, url, category) {
+  await addSkill(url, category, config);
   console.log('\nDone!');
 }
 
 // ============ Sync Command ============
 
-async function syncCommand(configDir, target, clean) {
+async function syncCommand(config, target, clean) {
+  // Ensure custom skills are copied before syncing
+  await copyCustomSkills(config);
   const targets = target === 'all' ? 'all' : target.split(',').map(t => t.trim());
-  await syncAll(configDir, { targets, clean });
+  await syncAll(config, { targets, clean });
 }
 
 // ============ Plugins Command ============
 
-async function pluginsCommand(configDir, clean, dryRun) {
-  await syncPlugins(configDir, { clean, dryRun });
+async function pluginsCommand(config, clean, dryRun) {
+  await syncPlugins(config, { clean, dryRun });
 }
 
 // ============ Catalog Command ============
 
-async function catalogCommand(configDir) {
-  await generateCatalog(configDir);
+async function catalogCommand(config) {
+  // Ensure custom skills are copied before generating catalog
+  await copyCustomSkills(config);
+  await generateCatalog(config);
 }
 
 // ============ Main CLI ============
@@ -261,8 +295,8 @@ const cli = yargs(hideBin(process.argv))
     await initCommand();
   })
   .command('check', 'Check status (no prompts, exit code)', {}, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await checkCommand(configDir);
+    const config = await getConfig(argv.config);
+    await checkCommand(config);
   })
   .command(['fetch [name]', 'f'], 'Fetch skills from GitHub', (yargs) => {
     return yargs.positional('name', {
@@ -270,8 +304,8 @@ const cli = yargs(hideBin(process.argv))
       description: 'Specific skill name to fetch'
     });
   }, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await fetchCommand(configDir, argv.name);
+    const config = await getConfig(argv.config);
+    await fetchCommand(config, argv.name);
   })
   .command('add <url>', 'Add a new skill from GitHub URL', (yargs) => {
     return yargs
@@ -286,8 +320,8 @@ const cli = yargs(hideBin(process.argv))
         description: 'Category for the skill'
       });
   }, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await addCommand(configDir, argv.url, argv.category);
+    const config = await getConfig(argv.config);
+    await addCommand(config, argv.url, argv.category);
   })
   .command(['sync [target]', 's'], 'Sync skills to targets', (yargs) => {
     return yargs
@@ -302,8 +336,8 @@ const cli = yargs(hideBin(process.argv))
         description: 'Remove orphaned skills from targets'
       });
   }, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await syncCommand(configDir, argv.target, argv.clean);
+    const config = await getConfig(argv.config);
+    await syncCommand(config, argv.target, argv.clean);
   })
   .command(['plugins', 'p'], 'Sync plugins', (yargs) => {
     return yargs
@@ -318,18 +352,18 @@ const cli = yargs(hideBin(process.argv))
         description: 'Show what would be done without doing it'
       });
   }, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await pluginsCommand(configDir, argv.clean, argv.dryRun);
+    const config = await getConfig(argv.config);
+    await pluginsCommand(config, argv.clean, argv.dryRun);
   })
   .command(['catalog', 'cat'], 'Regenerate skill catalog', {}, async (argv) => {
-    const configDir = await resolveConfigDir(argv.config);
-    await catalogCommand(configDir);
+    const config = await getConfig(argv.config);
+    await catalogCommand(config);
   })
   .command('$0', 'Interactive mode (default)', {}, async (argv) => {
     // Default command - interactive mode
     try {
-      const configDir = await resolveConfigDir(argv.config);
-      await interactiveMode(configDir);
+      const config = await getConfig(argv.config);
+      await interactiveMode(config);
     } catch (err) {
       if (err.message.includes('not found')) {
         console.log('Welcome to ai-config-sync!\n');
