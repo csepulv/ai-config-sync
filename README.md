@@ -44,7 +44,7 @@ ai-config-sync check
 | `ai-config-sync init` | Initialize configuration |
 | `ai-config-sync check` | Check status (CI-friendly) |
 | `ai-config-sync fetch [name]` | Fetch skills from GitHub |
-| `ai-config-sync add <url>` | Add a new skill from GitHub |
+| `ai-config-sync add <url> [--sourceIndex N]` | Add a new skill from GitHub |
 | `ai-config-sync sync [target]` | Sync skills to targets |
 | `ai-config-sync plugins` | Sync Claude plugins |
 | `ai-config-sync catalog` | Regenerate skill catalog |
@@ -61,31 +61,54 @@ ai-config-sync check
 
 ### ~/.ai-config-sync
 
-The tool stores its configuration pointer at `~/.ai-config-sync`:
+The tool stores its configuration at `~/.ai-config-sync`:
 
 ```yaml
-# Required: path to your config directory
-config_path: ~/workspace/my-ai-config
+# Source directories (read-only, contain skill/plugin definitions)
+# Listed in priority order - first source wins on conflicts
+source-directories:
+  - ~/workspace/ai-config/personal   # Your personal skills (priority 1)
+  - ~/workspace/team-ai-config       # Team shared skills (priority 2)
 
-# Optional: override default target directories
+# Config directory (where merged/fetched skills are stored)
+config-directory: ~/workspace/ai-config/merged
+
+# Target directories (where skills get synced to)
 targets:
   claude: ~/.claude/skills
   codex: ~/.codex/skills
   gemini: ~/.gemini/skills
 ```
 
-### Config Directory Structure
+### Multi-Source Architecture
 
-Your config directory contains your skills and registries:
+The tool supports multiple source directories, allowing you to combine personal and team configurations:
+
+1. **Source directories** contain `skills-directory.yaml`, `plugins-directory.yaml`, and custom `skills/`
+2. **Config directory** is where fetched GitHub skills and merged custom skills are stored
+3. **Targets** are where skills get synced (Claude, Codex, Gemini)
 
 ```
-~/workspace/my-ai-config/
-├── skills/                      # Skill files
-│   ├── my-custom-skill/
-│   │   └── SKILL.md
-│   └── fetched-skill/
-├── skills-directory.yaml        # Skill registry
-└── plugins-directory.yaml       # Plugin registry
+Flow: source-directories → merge → config-directory/skills → sync to targets
+```
+
+### Directory Structure
+
+```
+# Source directory (e.g., ~/workspace/ai-config/personal/)
+├── skills/                      # Custom skill files
+│   └── my-custom-skill/
+│       └── SKILL.md
+├── skills-directory.yaml        # Skill definitions
+└── plugins-directory.yaml       # Plugin definitions
+
+# Config directory (e.g., ~/workspace/ai-config/merged/)
+└── skills/                      # Fetched + copied skills
+    ├── my-custom-skill/         # Copied from source
+    ├── fetched-skill/           # Fetched from GitHub
+    └── skill-advisor/
+        └── references/
+            └── skill-catalog.md # Auto-generated catalog
 ```
 
 ### skills-directory.yaml
@@ -127,7 +150,12 @@ plugins:
 ### Add a skill from GitHub
 
 ```bash
+# Add to first source directory (default)
 ai-config-sync add https://github.com/anthropics/skills/tree/main/skills/frontend-design
+
+# Add to a specific source directory (0-based index)
+ai-config-sync add https://github.com/.../skills/team-skill --sourceIndex 1
+
 ai-config-sync sync
 ```
 
@@ -162,10 +190,12 @@ ai-config-sync plugins --clean    # Also uninstall unlisted
 
 ## How It Works
 
-1. **Skills Directory** (`skills-directory.yaml`) tracks all your skills with their sources and settings
-2. **Fetch** downloads skills from GitHub to your local `skills/` directory
-3. **Sync** copies skills to target directories (`~/.claude/skills`, etc.) and injects `disable-model-invocation` settings
-4. **Catalog** generates a markdown catalog for the skill-advisor skill to use
+1. **Source directories** contain `skills-directory.yaml` with skill definitions and `skills/` with custom skills
+2. **Merge** combines skills from all sources (first wins on conflicts)
+3. **Fetch** downloads GitHub skills to `config-directory/skills/`
+4. **Copy** copies custom skills from source directories to `config-directory/skills/`
+5. **Catalog** generates a skill catalog at `config-directory/skills/skill-advisor/references/`
+6. **Sync** copies skills to targets (`~/.claude/skills`, etc.) and injects `disable-model-invocation` settings
 
 ## Skill Categories
 
@@ -198,16 +228,17 @@ The skill-advisor implements a gatekeeper pattern:
 4. Users explicitly choose which skill to use
 
 To use it:
-1. Copy `samples/skill-advisor/` to your config's `skills/` directory
-2. Add to `skills-directory.yaml`:
+1. Copy `samples/skill-advisor/` to your source directory's `skills/` folder
+2. Add to your source's `skills-directory.yaml`:
    ```yaml
    - name: skill-advisor
      source: custom
      category: primary
      disable-model-invocation: false
    ```
-3. Run `ai-config-sync catalog` to generate the skill catalog
-4. Run `ai-config-sync sync`
+3. Run `ai-config-sync fetch` to copy custom skills to config-directory
+4. Run `ai-config-sync catalog` to generate the skill catalog
+5. Run `ai-config-sync sync`
 
 ## Requirements
 

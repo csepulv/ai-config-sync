@@ -253,8 +253,8 @@ async function fetchCommand(config, skillName) {
 
 // ============ Add Command ============
 
-async function addCommand(config, url, category) {
-  await addSkill(url, category, config);
+async function addCommand(config, url, category, sourceIndex) {
+  await addSkill(url, category, config, { sourceIndex });
   console.log('\nDone!');
 }
 
@@ -318,10 +318,14 @@ const cli = yargs(hideBin(process.argv))
         default: 'contextual',
         choices: ['primary', 'contextual', 'experimental'],
         description: 'Category for the skill'
+      })
+      .option('sourceIndex', {
+        type: 'number',
+        description: 'Index of source directory to add to (0-based, default: 0)'
       });
   }, async (argv) => {
     const config = await getConfig(argv.config);
-    await addCommand(config, argv.url, argv.category);
+    await addCommand(config, argv.url, argv.category, argv.sourceIndex);
   })
   .command(['sync [target]', 's'], 'Sync skills to targets', (yargs) => {
     return yargs
