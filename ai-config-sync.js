@@ -95,6 +95,8 @@ skills: []
     const template = `# Plugins to install
 # Run: ai-config-sync plugins
 
+marketplaces: []
+
 plugins: []
 `;
     await fs.writeFile(pluginsDirectoryPath, template);

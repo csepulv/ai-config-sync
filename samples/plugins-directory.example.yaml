@@ -1,11 +1,20 @@
 # Plugins Directory - Example Configuration
 #
-# This file defines which Claude Code plugins to install.
+# This file defines which Claude Code marketplaces and plugins to install.
 #
 # Usage:
 #   ai-config-sync plugins           # Install missing plugins
 #   ai-config-sync plugins --clean   # Also uninstall unlisted plugins
 #   ai-config-sync plugins --dry-run # Preview changes
+
+# Marketplaces are registered automatically before plugins are installed.
+# The source field accepts GitHub owner/repo shorthand or full URLs.
+marketplaces:
+  - name: claude-plugins-official
+    source: anthropics/claude-plugins-official
+
+  - name: claude-code-workflows
+    source: wshobson/agents
 
 plugins:
   # Claude Official Plugins
