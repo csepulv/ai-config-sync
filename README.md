@@ -135,6 +135,15 @@ skills:
 ### plugins-directory.yaml
 
 ```yaml
+# Marketplaces are auto-registered before plugins are installed.
+# The source field accepts GitHub owner/repo shorthand or full URLs.
+marketplaces:
+  - name: claude-plugins-official
+    source: anthropics/claude-plugins-official
+
+  - name: claude-code-workflows
+    source: wshobson/agents
+
 plugins:
   - name: superpowers
     marketplace: claude-plugins-official
