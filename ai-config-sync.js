@@ -17,6 +17,7 @@ import { syncAll } from './lib/sync.js';
 import { syncPlugins } from './lib/plugins.js';
 import { generateCatalog } from './lib/catalog.js';
 import { runAllChecks } from './lib/check.js';
+import { zipSkill, zipAllSkills } from './lib/zip.js';
 
 // ============ Init Command ============
 
@@ -197,40 +198,66 @@ async function interactiveMode(config) {
 
   console.log();
 
-  // Execute selected actions in order
+  // Execute selected actions in order, then auto-fix any cascading dependencies
   const actionOrder = ['plugin-sync', 'skill-fetch', 'generate-catalog', 'skill-sync'];
+  let actionsToRun = [...selected];
+  let iteration = 0;
+  const maxIterations = 3; // Prevent infinite loops
 
-  for (const action of actionOrder) {
-    const result = selected.find(r => r.action === action);
-    if (!result) continue;
+  while (actionsToRun.length > 0 && iteration < maxIterations) {
+    iteration++;
 
-    switch (action) {
-      case 'plugin-sync':
-        await syncPlugins(config, { clean: false });
-        break;
-      case 'skill-fetch':
-        if (result.skillNames?.length > 0) {
-          for (const skillName of result.skillNames) {
-            await fetchAllSkills(config, { skillName });
+    for (const action of actionOrder) {
+      const result = actionsToRun.find(r => r.action === action);
+      if (!result) continue;
+
+      switch (action) {
+        case 'plugin-sync':
+          await syncPlugins(config, { clean: false });
+          break;
+        case 'skill-fetch':
+          if (result.skillNames?.length > 0) {
+            for (const skillName of result.skillNames) {
+              await fetchAllSkills(config, { skillName });
+            }
+          } else {
+            await fetchAllSkills(config);
           }
-        } else {
-          await fetchAllSkills(config);
-        }
-        break;
-      case 'generate-catalog':
-        // Ensure custom skills are copied before generating catalog
-        await copyCustomSkills(config);
-        await generateCatalog(config);
-        break;
-      case 'skill-sync':
-        // Ensure custom skills are copied before syncing
-        await copyCustomSkills(config);
-        const syncAll_ = await confirm({
-          message: 'Sync skills to all targets?',
-          default: true
-        });
-        await syncAll(config, { targets: syncAll_ ? 'all' : 'claude' });
-        break;
+          break;
+        case 'generate-catalog':
+          // Ensure custom skills are copied before generating catalog
+          await copyCustomSkills(config);
+          await generateCatalog(config);
+          break;
+        case 'skill-sync':
+          // Ensure custom skills are copied before syncing
+          await copyCustomSkills(config);
+          // Only prompt on first iteration (user-selected actions)
+          if (iteration === 1) {
+            const syncAll_ = await confirm({
+              message: 'Sync skills to all targets?',
+              default: true
+            });
+            await syncAll(config, { targets: syncAll_ ? 'all' : 'claude' });
+          } else {
+            // Auto-sync cascading dependencies to all targets
+            await syncAll(config, { targets: 'all' });
+          }
+          break;
+      }
+    }
+
+    // Re-run checks to detect cascading dependencies
+    const newResults = await runAllChecks(config);
+    const newNeedsAction = newResults.filter(r => r.status === 'needs-action');
+
+    // Only auto-fix actions that weren't in the original selection
+    // (cascading dependencies caused by previous actions)
+    const originalActions = new Set(selected.map(r => r.action));
+    actionsToRun = newNeedsAction.filter(r => !originalActions.has(r.action));
+
+    if (actionsToRun.length > 0) {
+      console.log(`\nAuto-fixing cascading dependencies: ${actionsToRun.map(r => r.action).join(', ')}`);
     }
   }
 
@@ -279,6 +306,27 @@ async function catalogCommand(config) {
   // Ensure custom skills are copied before generating catalog
   await copyCustomSkills(config);
   await generateCatalog(config);
+}
+
+// ============ Zip Command ============
+
+async function zipCommand(config, skillName, output) {
+  // Ensure custom skills are copied before zipping
+  await copyCustomSkills(config);
+
+  const options = {};
+  if (output) {
+    options.output = expandPath(output);
+  }
+
+  if (skillName) {
+    const zipPath = await zipSkill(skillName, config, options);
+    console.log(`Created: ${zipPath}`);
+  } else {
+    await zipAllSkills(config, options);
+  }
+
+  console.log('\nDone! Upload these .zip files to Claude Desktop via Settings > Capabilities > Skills');
 }
 
 // ============ Main CLI ============
@@ -362,6 +410,21 @@ const cli = yargs(hideBin(process.argv))
   .command(['catalog', 'cat'], 'Regenerate skill catalog', {}, async (argv) => {
     const config = await getConfig(argv.config);
     await catalogCommand(config);
+  })
+  .command(['zip [name]', 'z'], 'Zip skills for Claude Desktop upload', (yargs) => {
+    return yargs
+      .positional('name', {
+        type: 'string',
+        description: 'Specific skill name to zip (omit for all)'
+      })
+      .option('output', {
+        alias: 'o',
+        type: 'string',
+        description: 'Output directory for zip files'
+      });
+  }, async (argv) => {
+    const config = await getConfig(argv.config);
+    await zipCommand(config, argv.name, argv.output);
   })
   .command('$0', 'Interactive mode (default)', {}, async (argv) => {
     // Default command - interactive mode
