@@ -15,6 +15,8 @@ import {
 import { fetchAllSkills, addSkill, copyCustomSkills, isGhCliAvailable } from './lib/fetch.js';
 import { syncAll } from './lib/sync.js';
 import { syncPlugins } from './lib/plugins.js';
+import { syncMcp } from './lib/mcp.js';
+import { syncRules } from './lib/rules.js';
 import { generateCatalog } from './lib/catalog.js';
 import { runAllChecks } from './lib/check.js';
 import { zipSkill, zipAllSkills } from './lib/zip.js';
@@ -61,6 +63,7 @@ async function initCommand() {
   // Create source directory
   await fs.mkdir(expandedSourcePath, { recursive: true });
   await fs.mkdir(path.join(expandedSourcePath, 'skills'), { recursive: true });
+  await fs.mkdir(path.join(expandedSourcePath, 'rules'), { recursive: true });
   console.log(`  ✓ Created source directory: ${expandedSourcePath}`);
 
   // Create config directory (if different)
@@ -101,6 +104,22 @@ plugins: []
 `;
     await fs.writeFile(pluginsDirectoryPath, template);
     console.log(`  ✓ Created plugins-directory.yaml`);
+  }
+
+  // Create mcp-directory.yaml if it doesn't exist
+  const mcpDirectoryPath = path.join(expandedSourcePath, 'mcp-directory.yaml');
+  try {
+    await fs.access(mcpDirectoryPath);
+    console.log(`  ✓ mcp-directory.yaml already exists`);
+  } catch {
+    const template = `# MCP servers to sync across AI tools
+# Run: ai-config-sync mcp
+# Run: ai-config-sync mcp --dry-run
+
+servers: []
+`;
+    await fs.writeFile(mcpDirectoryPath, template);
+    console.log(`  ✓ Created mcp-directory.yaml`);
   }
 
   // Save config with new structure
@@ -201,7 +220,7 @@ async function interactiveMode(config) {
   console.log();
 
   // Execute selected actions in order, then auto-fix any cascading dependencies
-  const actionOrder = ['plugin-sync', 'skill-fetch', 'generate-catalog', 'skill-sync'];
+  const actionOrder = ['plugin-sync', 'mcp-sync', 'rules-sync', 'skill-fetch', 'generate-catalog', 'skill-sync'];
   let actionsToRun = [...selected];
   let iteration = 0;
   const maxIterations = 3; // Prevent infinite loops
@@ -216,6 +235,12 @@ async function interactiveMode(config) {
       switch (action) {
         case 'plugin-sync':
           await syncPlugins(config, { clean: false });
+          break;
+        case 'mcp-sync':
+          await syncMcp(config, {});
+          break;
+        case 'rules-sync':
+          await syncRules(config, {});
           break;
         case 'skill-fetch':
           if (result.skillNames?.length > 0) {
@@ -240,7 +265,7 @@ async function interactiveMode(config) {
               message: 'Sync skills to all targets?',
               default: true
             });
-            await syncAll(config, { targets: syncAll_ ? 'all' : 'claude' });
+            await syncAll(config, { targets: syncAll_ ? 'all' : 'claude-code' });
           } else {
             // Auto-sync cascading dependencies to all targets
             await syncAll(config, { targets: 'all' });
@@ -300,6 +325,18 @@ async function syncCommand(config, target, clean) {
 
 async function pluginsCommand(config, clean, dryRun) {
   await syncPlugins(config, { clean, dryRun });
+}
+
+// ============ MCP Command ============
+
+async function mcpCommand(config, clean, dryRun) {
+  await syncMcp(config, { clean, dryRun });
+}
+
+// ============ Rules Command ============
+
+async function rulesCommand(config, clean, dryRun) {
+  await syncRules(config, { clean, dryRun });
 }
 
 // ============ Catalog Command ============
@@ -382,7 +419,7 @@ const cli = yargs(hideBin(process.argv))
       .positional('target', {
         type: 'string',
         default: 'all',
-        description: 'Target(s): "all" or comma-separated (claude,codex,gemini)'
+        description: 'Target(s): "all" or comma-separated (claude-code,codex,gemini)'
       })
       .option('clean', {
         type: 'boolean',
@@ -408,6 +445,38 @@ const cli = yargs(hideBin(process.argv))
   }, async (argv) => {
     const config = await getConfig(argv.config);
     await pluginsCommand(config, argv.clean, argv.dryRun);
+  })
+  .command('mcp', 'Sync MCP servers to configured targets', (yargs) => {
+    return yargs
+      .option('clean', {
+        type: 'boolean',
+        default: false,
+        description: 'Remove MCP servers no longer in directory'
+      })
+      .option('dry-run', {
+        type: 'boolean',
+        default: false,
+        description: 'Show what would be done without doing it'
+      });
+  }, async (argv) => {
+    const config = await getConfig(argv.config);
+    await mcpCommand(config, argv.clean, argv.dryRun);
+  })
+  .command('rules', 'Sync rules to configured targets', (yargs) => {
+    return yargs
+      .option('clean', {
+        type: 'boolean',
+        default: false,
+        description: 'Remove rules no longer in sources'
+      })
+      .option('dry-run', {
+        type: 'boolean',
+        default: false,
+        description: 'Show what would be done without doing it'
+      });
+  }, async (argv) => {
+    const config = await getConfig(argv.config);
+    await rulesCommand(config, argv.clean, argv.dryRun);
   })
   .command(['catalog', 'cat'], 'Regenerate skill catalog', {}, async (argv) => {
     const config = await getConfig(argv.config);

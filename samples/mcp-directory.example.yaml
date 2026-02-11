@@ -1,0 +1,79 @@
+# MCP Server Directory - Example Configuration
+#
+# This file defines MCP (Model Context Protocol) servers to sync across AI tools.
+# Servers defined here are synced to all targets listed in mcp-targets in ~/.ai-config-sync.
+#
+# Usage:
+#   ai-config-sync mcp              # Sync MCP servers to targets
+#   ai-config-sync mcp --clean      # Also remove servers no longer listed
+#   ai-config-sync mcp --dry-run    # Preview changes without applying
+#
+# Configure targets in ~/.ai-config-sync:
+#   mcp-targets:
+#     - claude-code       # Uses `claude mcp` CLI
+#     - claude-desktop    # ~/Library/Application Support/Claude/claude_desktop_config.json
+#     - cursor            # ~/.cursor/mcp.json
+#     - gemini            # ~/.gemini/settings.json
+#
+# Default target (if mcp-targets not set): claude-code
+
+servers:
+  # stdio server - runs a local command
+  - name: context7
+    command: npx
+    args: ["-y", "@anthropic/context7-mcp"]
+
+  # stdio server with environment variables using $VAR expansion
+  - name: github-mcp
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "$GITHUB_TOKEN"
+
+  # stdio server with ~/ path expansion
+  - name: memory
+    command: npx
+    args: ["-y", "@anthropic/memory-mcp"]
+    env:
+      MEMORY_FILE_PATH: "~/.config/ai-memory/memory.jsonl"
+
+  # HTTP server with ${VAR} expansion in headers
+  - name: remote-api
+    type: http
+    url: "https://api.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${MCP_AUTH_TOKEN}"
+
+# Variable expansion:
+#
+# String values in server definitions support shell-style variable expansion:
+#   $VAR or ${VAR}    Replaced with the variable's value
+#   ~/                Expanded to home directory (at start of value only)
+#
+# Resolution order:
+#   1. mcp-vars in ~/.ai-config-sync (machine-local overrides)
+#   2. Environment variables (e.g., $HOME, $USER)
+#
+# Unresolved variables are left as-is with a warning.
+#
+# Configure machine-local variables in ~/.ai-config-sync:
+#   mcp-vars:
+#     MCP_AUTH_TOKEN: "sk-proj-abc123"
+#     GITHUB_TOKEN: "ghp_your_token_here"
+#
+# This lets you share mcp-directory.yaml in a team repo while keeping
+# secrets and machine-specific paths in the local config file.
+
+# Field descriptions:
+#
+# name: Unique identifier for the server (used as the key in tool configs)
+#
+# For stdio servers (default):
+#   command: The command to run (e.g., npx, node, python)
+#   args: Command arguments as an array
+#   env: Optional environment variables passed to the process
+#
+# For HTTP servers:
+#   type: "http"
+#   url: The MCP endpoint URL
+#   headers: Optional HTTP headers (e.g., for authentication)
