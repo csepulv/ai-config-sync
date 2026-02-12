@@ -1,25 +1,20 @@
 #!/usr/bin/env node
 
+import { checkbox, confirm, input } from '@inquirer/prompts';
 import fs from 'fs/promises';
 import path from 'path';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { confirm, checkbox, input } from '@inquirer/prompts';
 
-import {
-  loadConfig,
-  saveConfig,
-  expandPath,
-  CONFIG_FILE
-} from './lib/config.js';
-import { fetchAllSkills, addSkill, copyCustomSkills, isGhCliAvailable } from './lib/fetch.js';
-import { syncAll } from './lib/sync.js';
-import { syncPlugins } from './lib/plugins.js';
-import { syncMcp } from './lib/mcp.js';
-import { syncRules } from './lib/rules.js';
 import { generateCatalog } from './lib/catalog.js';
 import { runAllChecks } from './lib/check.js';
-import { zipSkill, zipAllSkills } from './lib/zip.js';
+import { CONFIG_FILE, expandPath, loadConfig, saveConfig } from './lib/config.js';
+import { addSkill, copyCustomSkills, fetchAllSkills, isGhCliAvailable } from './lib/fetch.js';
+import { importMcpServers, removeMcpServersFromTargets, syncMcp } from './lib/mcp.js';
+import { syncPlugins } from './lib/plugins.js';
+import { syncRules } from './lib/rules.js';
+import { syncAll } from './lib/sync.js';
+import { zipAllSkills, zipSkill } from './lib/zip.js';
 
 // ============ Init Command ============
 
@@ -135,7 +130,7 @@ servers: []
 
 // ============ Helper: Get Config ============
 
-async function getConfig(overridePath) {
+async function getConfig(_overridePath) {
   const config = await loadConfig();
   if (!config) {
     throw new Error(`Config not found at ${CONFIG_FILE}. Run 'ai-config-sync init' first.`);
@@ -156,7 +151,7 @@ async function checkCommand(config) {
     console.log(`  ${result.name}... ${icon} ${result.message}`);
   }
 
-  const needsAction = results.filter(r => r.status === 'needs-action');
+  const needsAction = results.filter((r) => r.status === 'needs-action');
 
   if (needsAction.length === 0) {
     console.log('\n✅ Everything is up to date!\n');
@@ -179,7 +174,7 @@ async function interactiveMode(config) {
     console.log(`  ${result.name}... ${icon} ${result.message}`);
   }
 
-  const needsAction = results.filter(r => r.status === 'needs-action');
+  const needsAction = results.filter((r) => r.status === 'needs-action');
 
   if (needsAction.length === 0) {
     console.log('\n✅ Everything is up to date!\n');
@@ -192,7 +187,7 @@ async function interactiveMode(config) {
   for (const result of needsAction) {
     console.log(`⚠ ${result.name}: ${result.message}`);
     if (result.details) {
-      result.details.slice(0, 5).forEach(d => console.log(`    • ${d}`));
+      result.details.slice(0, 5).forEach((d) => console.log(`    • ${d}`));
       if (result.details.length > 5) {
         console.log(`    • ... and ${result.details.length - 5} more`);
       }
@@ -201,7 +196,7 @@ async function interactiveMode(config) {
   }
 
   // Ask what to fix
-  const choices = needsAction.map(r => ({
+  const choices = needsAction.map((r) => ({
     name: `${r.name} (${r.action})`,
     value: r,
     checked: true
@@ -220,7 +215,15 @@ async function interactiveMode(config) {
   console.log();
 
   // Execute selected actions in order, then auto-fix any cascading dependencies
-  const actionOrder = ['plugin-sync', 'mcp-sync', 'rules-sync', 'skill-fetch', 'generate-catalog', 'skill-sync'];
+  const actionOrder = [
+    'plugin-sync',
+    'mcp-import',
+    'mcp-sync',
+    'rules-sync',
+    'skill-fetch',
+    'generate-catalog',
+    'skill-sync'
+  ];
   let actionsToRun = [...selected];
   let iteration = 0;
   const maxIterations = 3; // Prevent infinite loops
@@ -229,16 +232,94 @@ async function interactiveMode(config) {
     iteration++;
 
     for (const action of actionOrder) {
-      const result = actionsToRun.find(r => r.action === action);
+      const result = actionsToRun.find((r) => r.action === action);
       if (!result) continue;
 
       switch (action) {
         case 'plugin-sync':
           await syncPlugins(config, { clean: false });
           break;
-        case 'mcp-sync':
-          await syncMcp(config, {});
+        case 'mcp-import':
+          if (result.serverEntries?.length > 0) {
+            const toImport = await checkbox({
+              message: 'Import unmanaged MCP servers to mcp-directory.yaml?',
+              choices: result.serverEntries.map((s) => ({
+                name: `${s.name} (${s.foundAt})`,
+                value: s,
+                checked: false
+              }))
+            });
+            if (toImport.length > 0) {
+              const { imported, envVars } = await importMcpServers(toImport, config);
+              console.log(`  Imported: ${imported.join(', ')}`);
+              if (Object.keys(envVars).length > 0) {
+                console.log(
+                  `  Added ${Object.keys(envVars).length} var(s) to mcp-vars in ~/.ai-config-sync`
+                );
+              }
+            }
+
+            // Offer to remove servers not selected for import
+            const importedNames = new Set(toImport.map((s) => s.name));
+            const remaining = result.serverEntries.filter((s) => !importedNames.has(s.name));
+            if (remaining.length > 0) {
+              const toRemove = await checkbox({
+                message: 'Remove these servers from all targets?',
+                choices: remaining.map((s) => ({
+                  name: `${s.name} (${s.foundAt})`,
+                  value: s.name,
+                  checked: false
+                }))
+              });
+              if (toRemove.length > 0) {
+                const { removed, targets } = await removeMcpServersFromTargets(
+                  toRemove,
+                  config
+                );
+                console.log(`  Removed ${removed.join(', ')} from ${targets.join(', ')}`);
+              }
+            }
+          }
           break;
+        case 'mcp-sync': {
+          // Offer per-server removal if there are servers to remove
+          let cleanNames;
+          if (result.removals?.length > 0) {
+            const toRemove = await checkbox({
+              message: 'Servers removed from directory. Remove from targets?',
+              choices: result.removals.map((s) => ({
+                name: `${s.name} (${s.target})`,
+                value: s.name,
+                checked: false
+              }))
+            });
+            if (toRemove.length > 0) {
+              cleanNames = toRemove;
+            }
+          }
+
+          const syncOptions = cleanNames ? { clean: true, cleanNames } : {};
+          const mcpResults = await syncMcp(config, syncOptions);
+
+          // Check if any CLI targets had skipped servers — offer per-server replace
+          const allSkipped = Object.entries(mcpResults).flatMap(([target, r]) =>
+            (r.skipped || []).map((name) => ({ name, target }))
+          );
+          if (allSkipped.length > 0) {
+            const toReplace = await checkbox({
+              message: 'These servers have config changes. Replace?',
+              choices: allSkipped.map((s) => ({
+                name: `${s.name} (${s.target})`,
+                value: s.name,
+                checked: false
+              }))
+            });
+            if (toReplace.length > 0) {
+              await syncMcp(config, { replaceNames: toReplace });
+            }
+          }
+          break;
+        }
         case 'rules-sync':
           await syncRules(config, {});
           break;
@@ -276,15 +357,17 @@ async function interactiveMode(config) {
 
     // Re-run checks to detect cascading dependencies
     const newResults = await runAllChecks(config);
-    const newNeedsAction = newResults.filter(r => r.status === 'needs-action');
+    const newNeedsAction = newResults.filter((r) => r.status === 'needs-action');
 
     // Only auto-fix actions that weren't in the original selection
     // (cascading dependencies caused by previous actions)
-    const originalActions = new Set(selected.map(r => r.action));
-    actionsToRun = newNeedsAction.filter(r => !originalActions.has(r.action));
+    const originalActions = new Set(selected.map((r) => r.action));
+    actionsToRun = newNeedsAction.filter((r) => !originalActions.has(r.action));
 
     if (actionsToRun.length > 0) {
-      console.log(`\nAuto-fixing cascading dependencies: ${actionsToRun.map(r => r.action).join(', ')}`);
+      console.log(
+        `\nAuto-fixing cascading dependencies: ${actionsToRun.map((r) => r.action).join(', ')}`
+      );
     }
   }
 
@@ -317,7 +400,7 @@ async function addCommand(config, url, category, sourceIndex) {
 async function syncCommand(config, target, clean) {
   // Ensure custom skills are copied before syncing
   await copyCustomSkills(config);
-  const targets = target === 'all' ? 'all' : target.split(',').map(t => t.trim());
+  const targets = target === 'all' ? 'all' : target.split(',').map((t) => t.trim());
   await syncAll(config, { targets, clean });
 }
 
@@ -329,8 +412,28 @@ async function pluginsCommand(config, clean, dryRun) {
 
 // ============ MCP Command ============
 
-async function mcpCommand(config, clean, dryRun) {
-  await syncMcp(config, { clean, dryRun });
+async function mcpCommand(config, clean, dryRun, replace) {
+  const results = await syncMcp(config, { clean, dryRun, replace });
+
+  // If not already replacing all and not dry-run, offer per-server replace for skipped servers
+  if (!replace && !dryRun) {
+    const allSkipped = Object.entries(results).flatMap(([target, r]) =>
+      (r.skipped || []).map((name) => ({ name, target }))
+    );
+    if (allSkipped.length > 0) {
+      const toReplace = await checkbox({
+        message: 'These servers have config changes. Replace?',
+        choices: allSkipped.map((s) => ({
+          name: `${s.name} (${s.target})`,
+          value: s.name,
+          checked: false
+        }))
+      });
+      if (toReplace.length > 0) {
+        await syncMcp(config, { replaceNames: toReplace });
+      }
+    }
+  }
 }
 
 // ============ Rules Command ============
@@ -365,7 +468,9 @@ async function zipCommand(config, skillName, output) {
     await zipAllSkills(config, options);
   }
 
-  console.log('\nDone! Upload these .zip files to Claude Desktop via Settings > Capabilities > Skills');
+  console.log(
+    '\nDone! Upload these .zip files to Claude Desktop via Settings > Capabilities > Skills'
+  );
 }
 
 // ============ Main CLI ============
@@ -385,118 +490,158 @@ const cli = yargs(hideBin(process.argv))
     const config = await getConfig(argv.config);
     await checkCommand(config);
   })
-  .command(['fetch [name]', 'f'], 'Fetch skills from GitHub', (yargs) => {
-    return yargs.positional('name', {
-      type: 'string',
-      description: 'Specific skill name to fetch'
-    });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await fetchCommand(config, argv.name);
-  })
-  .command('add <url>', 'Add a new skill from GitHub URL', (yargs) => {
-    return yargs
-      .positional('url', {
+  .command(
+    ['fetch [name]', 'f'],
+    'Fetch skills from GitHub',
+    (yargs) => {
+      return yargs.positional('name', {
         type: 'string',
-        description: 'GitHub URL of the skill'
-      })
-      .option('category', {
-        type: 'string',
-        default: 'contextual',
-        choices: ['primary', 'contextual', 'experimental'],
-        description: 'Category for the skill'
-      })
-      .option('sourceIndex', {
-        type: 'number',
-        description: 'Index of source directory to add to (0-based, default: 0)'
+        description: 'Specific skill name to fetch'
       });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await addCommand(config, argv.url, argv.category, argv.sourceIndex);
-  })
-  .command(['sync [target]', 's'], 'Sync skills to targets', (yargs) => {
-    return yargs
-      .positional('target', {
-        type: 'string',
-        default: 'all',
-        description: 'Target(s): "all" or comma-separated (claude-code,codex,gemini)'
-      })
-      .option('clean', {
-        type: 'boolean',
-        default: false,
-        description: 'Remove orphaned skills from targets'
-      });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await syncCommand(config, argv.target, argv.clean);
-  })
-  .command(['plugins', 'p'], 'Sync plugins', (yargs) => {
-    return yargs
-      .option('clean', {
-        type: 'boolean',
-        default: false,
-        description: 'Uninstall plugins not in directory'
-      })
-      .option('dry-run', {
-        type: 'boolean',
-        default: false,
-        description: 'Show what would be done without doing it'
-      });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await pluginsCommand(config, argv.clean, argv.dryRun);
-  })
-  .command('mcp', 'Sync MCP servers to configured targets', (yargs) => {
-    return yargs
-      .option('clean', {
-        type: 'boolean',
-        default: false,
-        description: 'Remove MCP servers no longer in directory'
-      })
-      .option('dry-run', {
-        type: 'boolean',
-        default: false,
-        description: 'Show what would be done without doing it'
-      });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await mcpCommand(config, argv.clean, argv.dryRun);
-  })
-  .command('rules', 'Sync rules to configured targets', (yargs) => {
-    return yargs
-      .option('clean', {
-        type: 'boolean',
-        default: false,
-        description: 'Remove rules no longer in sources'
-      })
-      .option('dry-run', {
-        type: 'boolean',
-        default: false,
-        description: 'Show what would be done without doing it'
-      });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await rulesCommand(config, argv.clean, argv.dryRun);
-  })
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await fetchCommand(config, argv.name);
+    }
+  )
+  .command(
+    'add <url>',
+    'Add a new skill from GitHub URL',
+    (yargs) => {
+      return yargs
+        .positional('url', {
+          type: 'string',
+          description: 'GitHub URL of the skill'
+        })
+        .option('category', {
+          type: 'string',
+          default: 'contextual',
+          choices: ['primary', 'contextual', 'experimental'],
+          description: 'Category for the skill'
+        })
+        .option('sourceIndex', {
+          type: 'number',
+          description: 'Index of source directory to add to (0-based, default: 0)'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await addCommand(config, argv.url, argv.category, argv.sourceIndex);
+    }
+  )
+  .command(
+    ['sync [target]', 's'],
+    'Sync skills to targets',
+    (yargs) => {
+      return yargs
+        .positional('target', {
+          type: 'string',
+          default: 'all',
+          description: 'Target(s): "all" or comma-separated (claude-code,codex,gemini)'
+        })
+        .option('clean', {
+          type: 'boolean',
+          default: false,
+          description: 'Remove orphaned skills from targets'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await syncCommand(config, argv.target, argv.clean);
+    }
+  )
+  .command(
+    ['plugins', 'p'],
+    'Sync plugins',
+    (yargs) => {
+      return yargs
+        .option('clean', {
+          type: 'boolean',
+          default: false,
+          description: 'Uninstall plugins not in directory'
+        })
+        .option('dry-run', {
+          type: 'boolean',
+          default: false,
+          description: 'Show what would be done without doing it'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await pluginsCommand(config, argv.clean, argv.dryRun);
+    }
+  )
+  .command(
+    'mcp',
+    'Sync MCP servers to configured targets',
+    (yargs) => {
+      return yargs
+        .option('clean', {
+          type: 'boolean',
+          default: false,
+          description: 'Remove MCP servers no longer in directory'
+        })
+        .option('replace', {
+          type: 'boolean',
+          default: false,
+          description: 'Replace existing servers at CLI targets (remove then re-add)'
+        })
+        .option('dry-run', {
+          type: 'boolean',
+          default: false,
+          description: 'Show what would be done without doing it'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await mcpCommand(config, argv.clean, argv.dryRun, argv.replace);
+    }
+  )
+  .command(
+    'rules',
+    'Sync rules to configured targets',
+    (yargs) => {
+      return yargs
+        .option('clean', {
+          type: 'boolean',
+          default: false,
+          description: 'Remove rules no longer in sources'
+        })
+        .option('dry-run', {
+          type: 'boolean',
+          default: false,
+          description: 'Show what would be done without doing it'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await rulesCommand(config, argv.clean, argv.dryRun);
+    }
+  )
   .command(['catalog', 'cat'], 'Regenerate skill catalog', {}, async (argv) => {
     const config = await getConfig(argv.config);
     await catalogCommand(config);
   })
-  .command(['zip [name]', 'z'], 'Zip skills for Claude Desktop upload', (yargs) => {
-    return yargs
-      .positional('name', {
-        type: 'string',
-        description: 'Specific skill name to zip (omit for all)'
-      })
-      .option('output', {
-        alias: 'o',
-        type: 'string',
-        description: 'Output directory for zip files'
-      });
-  }, async (argv) => {
-    const config = await getConfig(argv.config);
-    await zipCommand(config, argv.name, argv.output);
-  })
+  .command(
+    ['zip [name]', 'z'],
+    'Zip skills for Claude Desktop upload',
+    (yargs) => {
+      return yargs
+        .positional('name', {
+          type: 'string',
+          description: 'Specific skill name to zip (omit for all)'
+        })
+        .option('output', {
+          alias: 'o',
+          type: 'string',
+          description: 'Output directory for zip files'
+        });
+    },
+    async (argv) => {
+      const config = await getConfig(argv.config);
+      await zipCommand(config, argv.name, argv.output);
+    }
+  )
   .command('$0', 'Interactive mode (default)', {}, async (argv) => {
     // Default command - interactive mode
     try {

@@ -16,6 +16,10 @@
   "scripts": {
     "start": "node ai-config-sync.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write '**/*.js' '!node_modules'",
+    "format:check": "prettier --check '**/*.js' '!node_modules'",
     "prepublishOnly": "npm test"
   },
   "keywords": [
@@ -49,6 +53,12 @@
     "yargs": "^17.7.2"
   },
   "devDependencies": {
-    "jest": "^30.2.0"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "globals": "^17.3.0",
+    "jest": "^30.2.0",
+    "prettier": "^3.8.1"
   }
 }
