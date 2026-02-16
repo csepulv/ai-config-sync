@@ -10,7 +10,8 @@ import { generateCatalog } from './lib/catalog.js';
 import { runAllChecks } from './lib/check.js';
 import { CONFIG_FILE, expandPath, loadConfig, saveConfig } from './lib/config.js';
 import { addSkill, copyCustomSkills, fetchAllSkills, isGhCliAvailable } from './lib/fetch.js';
-import { importMcpServers, removeMcpServersFromTargets, syncMcp } from './lib/mcp.js';
+import { importMcpServers, removeMcpServersFromTargets } from './lib/mcp-manage.js';
+import { syncMcp } from './lib/mcp.js';
 import { syncPlugins } from './lib/plugins.js';
 import { syncRules } from './lib/rules.js';
 import { syncAll } from './lib/sync.js';
@@ -139,17 +140,219 @@ async function getConfig(_overridePath) {
   return config;
 }
 
+// ============ Display Helpers ============
+
+function displayCheckResults(results) {
+  for (const result of results) {
+    const icon = result.status === 'ok' ? '✓' : result.status === 'needs-action' ? '⚠' : '✗';
+    console.log(`  ${result.name}... ${icon} ${result.message}`);
+  }
+}
+
+function displayCheckDetails(needsAction) {
+  console.log('\n' + '─'.repeat(50) + '\n');
+  for (const result of needsAction) {
+    console.log(`⚠ ${result.name}: ${result.message}`);
+    if (result.details) {
+      result.details.slice(0, 5).forEach((d) => console.log(`    • ${d}`));
+      if (result.details.length > 5) {
+        console.log(`    • ... and ${result.details.length - 5} more`);
+      }
+    }
+    console.log();
+  }
+}
+
+async function promptActionSelection(needsAction) {
+  const choices = needsAction.map((r) => ({
+    name: `${r.name} (${r.action})`,
+    value: r,
+    checked: true
+  }));
+  return checkbox({ message: 'What would you like to fix?', choices });
+}
+
+async function promptSkippedServerReplace(mcpResults, config) {
+  const allSkipped = Object.entries(mcpResults).flatMap(([target, r]) =>
+    (r.skipped || []).map((name) => ({ name, target }))
+  );
+  if (allSkipped.length === 0) return;
+
+  const toReplace = await checkbox({
+    message: 'These servers have config changes. Replace?',
+    choices: allSkipped.map((s) => ({
+      name: `${s.name} (${s.target})`,
+      value: s.name,
+      checked: false
+    }))
+  });
+  if (toReplace.length > 0) {
+    await syncMcp(config, { replaceNames: toReplace });
+  }
+}
+
+// ============ Action Handlers ============
+
+async function handlePluginSync(config) {
+  await syncPlugins(config, { clean: false });
+}
+
+async function handleMcpImport(config, result) {
+  if (!result.serverEntries?.length) return;
+
+  const toImport = await checkbox({
+    message: 'Import unmanaged MCP servers to mcp-directory.yaml?',
+    choices: result.serverEntries.map((s) => ({
+      name: `${s.name} (${s.foundAt})`,
+      value: s,
+      checked: false
+    }))
+  });
+  if (toImport.length > 0) {
+    const { imported, envVars } = await importMcpServers(toImport, config);
+    console.log(`  Imported: ${imported.join(', ')}`);
+    if (Object.keys(envVars).length > 0) {
+      console.log(
+        `  Added ${Object.keys(envVars).length} var(s) to mcp-vars in ~/.ai-config-sync`
+      );
+    }
+  }
+
+  // Offer to remove servers not selected for import
+  const importedNames = new Set(toImport.map((s) => s.name));
+  const remaining = result.serverEntries.filter((s) => !importedNames.has(s.name));
+  if (remaining.length > 0) {
+    const toRemove = await checkbox({
+      message: 'Remove these servers from all targets?',
+      choices: remaining.map((s) => ({
+        name: `${s.name} (${s.foundAt})`,
+        value: s.name,
+        checked: false
+      }))
+    });
+    if (toRemove.length > 0) {
+      const { removed, targets } = await removeMcpServersFromTargets(toRemove, config);
+      console.log(`  Removed ${removed.join(', ')} from ${targets.join(', ')}`);
+    }
+  }
+}
+
+async function handleMcpSync(config, result) {
+  let cleanNames;
+  if (result.removals?.length > 0) {
+    const toRemove = await checkbox({
+      message: 'Servers removed from directory. Remove from targets?',
+      choices: result.removals.map((s) => ({
+        name: `${s.name} (${s.target})`,
+        value: s.name,
+        checked: false
+      }))
+    });
+    if (toRemove.length > 0) {
+      cleanNames = toRemove;
+    }
+  }
+
+  const syncOptions = cleanNames ? { clean: true, cleanNames } : {};
+  const mcpResults = await syncMcp(config, syncOptions);
+  await promptSkippedServerReplace(mcpResults, config);
+}
+
+async function handleRulesSync(config) {
+  await syncRules(config, {});
+}
+
+async function handleSkillFetch(config, result) {
+  if (result.skillNames?.length > 0) {
+    for (const skillName of result.skillNames) {
+      await fetchAllSkills(config, { skillName });
+    }
+  } else {
+    await fetchAllSkills(config);
+  }
+}
+
+async function handleCatalogGenerate(config) {
+  await copyCustomSkills(config);
+  await generateCatalog(config);
+}
+
+async function handleSkillSync(config, _result, iteration) {
+  await copyCustomSkills(config);
+  if (iteration === 1) {
+    const doSyncAll = await confirm({
+      message: 'Sync skills to all targets?',
+      default: true
+    });
+    await syncAll(config, { targets: doSyncAll ? 'all' : 'claude-code' });
+  } else {
+    await syncAll(config, { targets: 'all' });
+  }
+}
+
+// ============ Cascade Runner ============
+
+const ACTION_ORDER = [
+  'plugin-sync',
+  'mcp-import',
+  'mcp-sync',
+  'rules-sync',
+  'skill-fetch',
+  'generate-catalog',
+  'skill-sync'
+];
+
+const ACTION_HANDLERS = {
+  'plugin-sync': handlePluginSync,
+  'mcp-import': handleMcpImport,
+  'mcp-sync': handleMcpSync,
+  'rules-sync': handleRulesSync,
+  'skill-fetch': handleSkillFetch,
+  'generate-catalog': handleCatalogGenerate,
+  'skill-sync': handleSkillSync
+};
+
+async function executeCascadingActions(config, selected) {
+  let actionsToRun = [...selected];
+  let iteration = 0;
+  const maxIterations = 3;
+
+  while (actionsToRun.length > 0 && iteration < maxIterations) {
+    iteration++;
+
+    for (const action of ACTION_ORDER) {
+      const result = actionsToRun.find((r) => r.action === action);
+      if (!result) continue;
+
+      const handler = ACTION_HANDLERS[action];
+      if (handler) {
+        await handler(config, result, iteration);
+      }
+    }
+
+    // Re-run checks to detect cascading dependencies
+    const newResults = await runAllChecks(config);
+    const newNeedsAction = newResults.filter((r) => r.status === 'needs-action');
+
+    // Only auto-fix actions that weren't in the original selection
+    const originalActions = new Set(selected.map((r) => r.action));
+    actionsToRun = newNeedsAction.filter((r) => !originalActions.has(r.action));
+
+    if (actionsToRun.length > 0) {
+      console.log(
+        `\nAuto-fixing cascading dependencies: ${actionsToRun.map((r) => r.action).join(', ')}`
+      );
+    }
+  }
+}
+
 // ============ Check Command ============
 
 async function checkCommand(config) {
   console.log('Checking AI config status...\n');
 
   const results = await runAllChecks(config);
-
-  for (const result of results) {
-    const icon = result.status === 'ok' ? '✓' : result.status === 'needs-action' ? '⚠' : '✗';
-    console.log(`  ${result.name}... ${icon} ${result.message}`);
-  }
+  displayCheckResults(results);
 
   const needsAction = results.filter((r) => r.status === 'needs-action');
 
@@ -168,209 +371,24 @@ async function interactiveMode(config) {
   console.log('Checking AI config status...\n');
 
   const results = await runAllChecks(config);
-
-  for (const result of results) {
-    const icon = result.status === 'ok' ? '✓' : result.status === 'needs-action' ? '⚠' : '✗';
-    console.log(`  ${result.name}... ${icon} ${result.message}`);
-  }
+  displayCheckResults(results);
 
   const needsAction = results.filter((r) => r.status === 'needs-action');
-
   if (needsAction.length === 0) {
     console.log('\n✅ Everything is up to date!\n');
     return;
   }
 
-  // Show details
-  console.log('\n' + '─'.repeat(50) + '\n');
+  displayCheckDetails(needsAction);
 
-  for (const result of needsAction) {
-    console.log(`⚠ ${result.name}: ${result.message}`);
-    if (result.details) {
-      result.details.slice(0, 5).forEach((d) => console.log(`    • ${d}`));
-      if (result.details.length > 5) {
-        console.log(`    • ... and ${result.details.length - 5} more`);
-      }
-    }
-    console.log();
-  }
-
-  // Ask what to fix
-  const choices = needsAction.map((r) => ({
-    name: `${r.name} (${r.action})`,
-    value: r,
-    checked: true
-  }));
-
-  const selected = await checkbox({
-    message: 'What would you like to fix?',
-    choices
-  });
-
+  const selected = await promptActionSelection(needsAction);
   if (selected.length === 0) {
     console.log('\nNo actions selected.\n');
     return;
   }
 
   console.log();
-
-  // Execute selected actions in order, then auto-fix any cascading dependencies
-  const actionOrder = [
-    'plugin-sync',
-    'mcp-import',
-    'mcp-sync',
-    'rules-sync',
-    'skill-fetch',
-    'generate-catalog',
-    'skill-sync'
-  ];
-  let actionsToRun = [...selected];
-  let iteration = 0;
-  const maxIterations = 3; // Prevent infinite loops
-
-  while (actionsToRun.length > 0 && iteration < maxIterations) {
-    iteration++;
-
-    for (const action of actionOrder) {
-      const result = actionsToRun.find((r) => r.action === action);
-      if (!result) continue;
-
-      switch (action) {
-        case 'plugin-sync':
-          await syncPlugins(config, { clean: false });
-          break;
-        case 'mcp-import':
-          if (result.serverEntries?.length > 0) {
-            const toImport = await checkbox({
-              message: 'Import unmanaged MCP servers to mcp-directory.yaml?',
-              choices: result.serverEntries.map((s) => ({
-                name: `${s.name} (${s.foundAt})`,
-                value: s,
-                checked: false
-              }))
-            });
-            if (toImport.length > 0) {
-              const { imported, envVars } = await importMcpServers(toImport, config);
-              console.log(`  Imported: ${imported.join(', ')}`);
-              if (Object.keys(envVars).length > 0) {
-                console.log(
-                  `  Added ${Object.keys(envVars).length} var(s) to mcp-vars in ~/.ai-config-sync`
-                );
-              }
-            }
-
-            // Offer to remove servers not selected for import
-            const importedNames = new Set(toImport.map((s) => s.name));
-            const remaining = result.serverEntries.filter((s) => !importedNames.has(s.name));
-            if (remaining.length > 0) {
-              const toRemove = await checkbox({
-                message: 'Remove these servers from all targets?',
-                choices: remaining.map((s) => ({
-                  name: `${s.name} (${s.foundAt})`,
-                  value: s.name,
-                  checked: false
-                }))
-              });
-              if (toRemove.length > 0) {
-                const { removed, targets } = await removeMcpServersFromTargets(
-                  toRemove,
-                  config
-                );
-                console.log(`  Removed ${removed.join(', ')} from ${targets.join(', ')}`);
-              }
-            }
-          }
-          break;
-        case 'mcp-sync': {
-          // Offer per-server removal if there are servers to remove
-          let cleanNames;
-          if (result.removals?.length > 0) {
-            const toRemove = await checkbox({
-              message: 'Servers removed from directory. Remove from targets?',
-              choices: result.removals.map((s) => ({
-                name: `${s.name} (${s.target})`,
-                value: s.name,
-                checked: false
-              }))
-            });
-            if (toRemove.length > 0) {
-              cleanNames = toRemove;
-            }
-          }
-
-          const syncOptions = cleanNames ? { clean: true, cleanNames } : {};
-          const mcpResults = await syncMcp(config, syncOptions);
-
-          // Check if any CLI targets had skipped servers — offer per-server replace
-          const allSkipped = Object.entries(mcpResults).flatMap(([target, r]) =>
-            (r.skipped || []).map((name) => ({ name, target }))
-          );
-          if (allSkipped.length > 0) {
-            const toReplace = await checkbox({
-              message: 'These servers have config changes. Replace?',
-              choices: allSkipped.map((s) => ({
-                name: `${s.name} (${s.target})`,
-                value: s.name,
-                checked: false
-              }))
-            });
-            if (toReplace.length > 0) {
-              await syncMcp(config, { replaceNames: toReplace });
-            }
-          }
-          break;
-        }
-        case 'rules-sync':
-          await syncRules(config, {});
-          break;
-        case 'skill-fetch':
-          if (result.skillNames?.length > 0) {
-            for (const skillName of result.skillNames) {
-              await fetchAllSkills(config, { skillName });
-            }
-          } else {
-            await fetchAllSkills(config);
-          }
-          break;
-        case 'generate-catalog':
-          // Ensure custom skills are copied before generating catalog
-          await copyCustomSkills(config);
-          await generateCatalog(config);
-          break;
-        case 'skill-sync':
-          // Ensure custom skills are copied before syncing
-          await copyCustomSkills(config);
-          // Only prompt on first iteration (user-selected actions)
-          if (iteration === 1) {
-            const syncAll_ = await confirm({
-              message: 'Sync skills to all targets?',
-              default: true
-            });
-            await syncAll(config, { targets: syncAll_ ? 'all' : 'claude-code' });
-          } else {
-            // Auto-sync cascading dependencies to all targets
-            await syncAll(config, { targets: 'all' });
-          }
-          break;
-      }
-    }
-
-    // Re-run checks to detect cascading dependencies
-    const newResults = await runAllChecks(config);
-    const newNeedsAction = newResults.filter((r) => r.status === 'needs-action');
-
-    // Only auto-fix actions that weren't in the original selection
-    // (cascading dependencies caused by previous actions)
-    const originalActions = new Set(selected.map((r) => r.action));
-    actionsToRun = newNeedsAction.filter((r) => !originalActions.has(r.action));
-
-    if (actionsToRun.length > 0) {
-      console.log(
-        `\nAuto-fixing cascading dependencies: ${actionsToRun.map((r) => r.action).join(', ')}`
-      );
-    }
-  }
-
+  await executeCascadingActions(config, selected);
   console.log('\n✅ Done!\n');
 }
 
@@ -415,24 +433,8 @@ async function pluginsCommand(config, clean, dryRun) {
 async function mcpCommand(config, clean, dryRun, replace) {
   const results = await syncMcp(config, { clean, dryRun, replace });
 
-  // If not already replacing all and not dry-run, offer per-server replace for skipped servers
   if (!replace && !dryRun) {
-    const allSkipped = Object.entries(results).flatMap(([target, r]) =>
-      (r.skipped || []).map((name) => ({ name, target }))
-    );
-    if (allSkipped.length > 0) {
-      const toReplace = await checkbox({
-        message: 'These servers have config changes. Replace?',
-        choices: allSkipped.map((s) => ({
-          name: `${s.name} (${s.target})`,
-          value: s.name,
-          checked: false
-        }))
-      });
-      if (toReplace.length > 0) {
-        await syncMcp(config, { replaceNames: toReplace });
-      }
-    }
+    await promptSkippedServerReplace(results, config);
   }
 }
 
