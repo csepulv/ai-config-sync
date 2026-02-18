@@ -1,26 +1,30 @@
 # ai-config-sync
 
-CLI tool for managing AI assistant skills and plugins across Claude, Codex, and Gemini.
+CLI tool for managing AI assistant skills, plugins, MCP servers, and rules across Claude, Codex, and Gemini.
 
 ## Features
 
 - **Fetch skills** from GitHub repositories
 - **Sync skills** to Claude, Codex, and Gemini config directories
 - **Manage plugins** for Claude Code
+- **Sync MCP servers** across Claude Code, Claude Desktop, Cursor, and Gemini
+- **Sync rules** to configured targets
 - **Generate skill catalogs** for skill-advisor
 - **Interactive mode** with status checks and guided fixes
 
 ## Installation
 
 ```bash
-# Clone and install globally
+npm install -g ai-config-sync
+```
+
+Or from source:
+
+```bash
 git clone https://github.com/csepulv/ai-config-sync
 cd ai-config-sync
 npm install
-npm link
-
-# Or install directly from npm (if published)
-npm install -g ai-config-sync
+npm link  # Makes `ai-config-sync` available globally
 ```
 
 ## Quick Start
@@ -47,6 +51,8 @@ ai-config-sync check
 | `ai-config-sync add <url> [--sourceIndex N]` | Add a new skill from GitHub |
 | `ai-config-sync sync [target]` | Sync skills to targets |
 | `ai-config-sync plugins` | Sync Claude plugins |
+| `ai-config-sync mcp` | Sync MCP servers to targets |
+| `ai-config-sync rules` | Sync rules to targets |
 | `ai-config-sync catalog` | Regenerate skill catalog |
 
 ### Global Options
@@ -84,9 +90,9 @@ targets:
 
 The tool supports multiple source directories, allowing you to combine personal and team configurations:
 
-1. **Source directories** contain `skills-directory.yaml`, `plugins-directory.yaml`, and custom `skills/`
+1. **Source directories** contain `skills-directory.yaml`, `plugins-directory.yaml`, `mcp-directory.yaml`, and custom `skills/`
 2. **Config directory** is where fetched GitHub skills and merged custom skills are stored
-3. **Targets** are where skills get synced (Claude, Codex, Gemini)
+3. **Targets** are where skills, MCP servers, and rules get synced
 
 ```
 Flow: source-directories → merge → config-directory/skills → sync to targets
@@ -100,7 +106,8 @@ Flow: source-directories → merge → config-directory/skills → sync to targe
 │   └── my-custom-skill/
 │       └── SKILL.md
 ├── skills-directory.yaml        # Skill definitions
-└── plugins-directory.yaml       # Plugin definitions
+├── plugins-directory.yaml       # Plugin definitions
+└── mcp-directory.yaml           # MCP server definitions
 
 # Config directory (e.g., ~/workspace/ai-config/merged/)
 └── skills/                      # Fetched + copied skills
@@ -154,6 +161,50 @@ plugins:
     category: lsp
 ```
 
+### mcp-directory.yaml
+
+```yaml
+servers:
+  # stdio server - runs a local command
+  - name: context7
+    command: npx
+    args: ["-y", "@anthropic/context7-mcp"]
+
+  # stdio server with environment variables
+  - name: github-mcp
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_TOKEN: "$GITHUB_TOKEN"
+
+  # HTTP server
+  - name: remote-api
+    type: http
+    url: "https://api.example.com/mcp"
+    headers:
+      Authorization: "Bearer ${MCP_AUTH_TOKEN}"
+```
+
+String values support `$VAR` / `${VAR}` expansion and `~/` home directory expansion. Variables resolve from `mcp-vars` in `~/.ai-config-sync` first, then environment variables.
+
+```yaml
+# In ~/.ai-config-sync
+mcp-vars:
+  GITHUB_TOKEN: "ghp_your_token_here"
+  MCP_AUTH_TOKEN: "sk-proj-abc123"
+```
+
+### MCP Targets
+
+MCP servers sync to the targets enabled in `~/.ai-config-sync`. Default target is `claude-code`.
+
+| Target | Method | Config Location |
+|--------|--------|-----------------|
+| `claude-code` | CLI (`claude mcp add-json`) | `~/.claude.json` |
+| `claude-desktop` | File merge | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| `cursor` | File merge | `~/.cursor/mcp.json` |
+| `gemini` | File merge | `~/.gemini/settings.json` |
+
 ## Usage Examples
 
 ### Add a skill from GitHub
@@ -197,6 +248,23 @@ ai-config-sync plugins --dry-run  # Preview only
 ai-config-sync plugins --clean    # Also uninstall unlisted
 ```
 
+### Sync MCP servers
+
+```bash
+ai-config-sync mcp               # Sync servers to all targets
+ai-config-sync mcp --dry-run     # Preview changes
+ai-config-sync mcp --clean       # Also remove servers no longer in directory
+ai-config-sync mcp --replace     # Replace all servers with changed configs
+```
+
+### Sync rules
+
+```bash
+ai-config-sync rules
+ai-config-sync rules --dry-run
+ai-config-sync rules --clean
+```
+
 ## How It Works
 
 1. **Source directories** contain `skills-directory.yaml` with skill definitions and `skills/` with custom skills
@@ -205,6 +273,39 @@ ai-config-sync plugins --clean    # Also uninstall unlisted
 4. **Copy** copies custom skills from source directories to `config-directory/skills/`
 5. **Catalog** generates a skill catalog at `config-directory/skills/skill-advisor/references/`
 6. **Sync** copies skills to targets (`~/.claude/skills`, etc.) and injects `disable-model-invocation` settings
+
+## MCP Server Management
+
+The `mcp` command syncs servers defined in `mcp-directory.yaml` to all enabled targets. It tracks state in `mcp-state.json` to know which servers it previously placed.
+
+### Adding servers
+
+Define servers in `mcp-directory.yaml` in any source directory, then run `ai-config-sync mcp`. Servers are merged from all sources (first source wins on name conflicts).
+
+### Removing servers
+
+Remove the server from `mcp-directory.yaml` and run `ai-config-sync mcp --clean`. The tool compares the directory against its state file and removes servers that are no longer listed.
+
+In interactive mode, the tool detects servers to remove and offers a per-server checkbox (unchecked by default) so you can choose which to actually remove.
+
+### Replacing servers
+
+When a server's config changes (e.g., new args or env), the CLI target (`claude-code`) skips it by default to avoid overwriting local changes. Use `--replace` to replace all, or run interactively to get a per-server replace checkbox.
+
+### Unmanaged servers
+
+The tool detects servers installed at targets that aren't in any `mcp-directory.yaml`. In interactive mode, it offers two choices per server:
+
+1. **Import** - adds the server to `mcp-directory.yaml` so it becomes managed (env values are extracted to `mcp-vars`)
+2. **Remove** - deletes the server from all targets
+
+Servers that are neither imported nor removed will be detected again on the next run.
+
+### State tracking
+
+The tool writes `mcp-state.json` to the config directory after each sync. This tracks which servers were synced to each target, enabling:
+- Detection of servers to remove (in state but not in directory)
+- Distinguishing intentional removals from unmanaged servers (previously-managed servers aren't offered for re-import)
 
 ## Skill Categories
 
@@ -225,6 +326,7 @@ The `samples/` directory contains example configurations:
 
 - `skills-directory.example.yaml` - Example skill registry
 - `plugins-directory.example.yaml` - Example plugin registry
+- `mcp-directory.example.yaml` - Example MCP server registry
 - `skill-advisor/` - A "gatekeeper" skill that recommends other skills
 
 ### skill-advisor
