@@ -54,6 +54,7 @@ ai-config-sync check
 | `ai-config-sync mcp` | Sync MCP servers to targets |
 | `ai-config-sync rules` | Sync rules to targets |
 | `ai-config-sync catalog` | Regenerate skill catalog |
+| `ai-config-sync zip [name]` | Zip skills for Claude Desktop upload |
 
 ### Global Options
 
@@ -79,11 +80,20 @@ source-directories:
 # Config directory (where merged/fetched skills are stored)
 config-directory: ~/workspace/ai-config/merged
 
-# Target directories (where skills get synced to)
+# Override default target paths (optional)
+# Each target can have: skills (path), rules (path), mcp (true/false)
 targets:
-  claude: ~/.claude/skills
-  codex: ~/.codex/skills
-  gemini: ~/.gemini/skills
+  claude-code:
+    skills: ~/.claude/skills
+    rules: ~/.claude/rules
+    mcp: true
+  codex:
+    skills: ~/.codex/skills
+    rules: ~/.codex
+  gemini:
+    skills: ~/.gemini/skills
+    rules: ~/.gemini
+    mcp: true
 ```
 
 ### Multi-Source Architecture
@@ -353,9 +363,17 @@ To use it:
 
 ## Requirements
 
-- Node.js >= 18
-- `gh` CLI (optional, for higher GitHub API rate limits)
-- `claude` CLI (for plugin management)
+### Required
+
+- **Node.js >= 18**
+
+### Recommended
+
+- **[GitHub CLI (`gh`)](https://cli.github.com/)** — Used for authenticated GitHub API access when fetching skills. Without it, the tool falls back to unauthenticated requests, which are limited to 60 requests/hour and may fail on private repos. Install and run `gh auth login` to authenticate.
+
+### Optional (feature-dependent)
+
+- **[Claude Code CLI (`claude`)](https://docs.anthropic.com/en/docs/claude-code)** — Required for plugin management (`plugins` command) and MCP server sync to the `claude-code` target. Not needed if you only sync skills, rules, or MCP servers to file-based targets (Claude Desktop, Cursor, Gemini).
 
 ## Development
 
