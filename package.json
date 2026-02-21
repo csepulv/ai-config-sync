@@ -9,7 +9,7 @@
   },
   "files": [
     "ai-config-sync.js",
-    "lib/",
+    "lib/*.js",
     "samples/",
     "README.md"
   ],
