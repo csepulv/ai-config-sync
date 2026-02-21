@@ -1,11 +1,11 @@
 {
   "name": "ai-config-sync",
   "version": "1.0.0",
-  "description": "CLI tool for managing AI assistant skills and plugins across Claude, Codex, and Gemini",
+  "description": "CLI tool for managing AI assistant skills and plugins across Claude, Codex, Cursor, and Gemini",
   "type": "module",
   "main": "ai-config-sync.js",
   "bin": {
-    "ai-config-sync": "./ai-config-sync.js"
+    "ai-config-sync": "ai-config-sync.js"
   },
   "files": [
     "ai-config-sync.js",
@@ -24,6 +24,7 @@
   },
   "keywords": [
     "claude",
+    "cursor",
     "codex",
     "gemini",
     "ai",
