@@ -298,8 +298,8 @@ const ACTION_ORDER = [
   'mcp-sync',
   'rules-sync',
   'skill-fetch',
-  'generate-catalog',
-  'skill-sync'
+  'skill-sync',
+  'generate-catalog'
 ];
 
 const ACTION_HANDLERS = {
@@ -348,10 +348,10 @@ async function executeCascadingActions(config, selected) {
 
 // ============ Check Command ============
 
-async function checkCommand(config) {
+async function checkCommand(config, options = {}) {
   console.log('Checking AI config status...\n');
 
-  const results = await runAllChecks(config);
+  const results = await runAllChecks(config, options);
   displayCheckResults(results);
 
   const needsAction = results.filter((r) => r.status === 'needs-action');
@@ -367,10 +367,10 @@ async function checkCommand(config) {
 
 // ============ Interactive Mode ============
 
-async function interactiveMode(config) {
+async function interactiveMode(config, options = {}) {
   console.log('Checking AI config status...\n');
 
-  const results = await runAllChecks(config);
+  const results = await runAllChecks(config, options);
   displayCheckResults(results);
 
   const needsAction = results.filter((r) => r.status === 'needs-action');
@@ -485,12 +485,17 @@ const cli = yargs(hideBin(process.argv))
     type: 'string',
     description: 'Override config directory path'
   })
+  .option('check-public-updates', {
+    type: 'boolean',
+    default: false,
+    description: 'Check for skill updates from GitHub (makes API calls)'
+  })
   .command('init', 'Initialize ai-config-sync configuration', {}, async () => {
     await initCommand();
   })
   .command('check', 'Check status (no prompts, exit code)', {}, async (argv) => {
     const config = await getConfig(argv.config);
-    await checkCommand(config);
+    await checkCommand(config, { checkGitHub: argv.checkPublicUpdates });
   })
   .command(
     ['fetch [name]', 'f'],
@@ -620,6 +625,11 @@ const cli = yargs(hideBin(process.argv))
       await rulesCommand(config, argv.clean, argv.dryRun);
     }
   )
+  .command('readme', 'Show the README', {}, async () => {
+    const readmePath = new URL('./README.md', import.meta.url).pathname;
+    const content = await fs.readFile(readmePath, 'utf-8');
+    console.log(content);
+  })
   .command(['catalog', 'cat'], 'Regenerate skill catalog', {}, async (argv) => {
     const config = await getConfig(argv.config);
     await catalogCommand(config);
@@ -648,7 +658,7 @@ const cli = yargs(hideBin(process.argv))
     // Default command - interactive mode
     try {
       const config = await getConfig(argv.config);
-      await interactiveMode(config);
+      await interactiveMode(config, { checkGitHub: argv.checkPublicUpdates });
     } catch (err) {
       if (err.message.includes('not found')) {
         console.log('Welcome to ai-config-sync!\n');

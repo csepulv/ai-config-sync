@@ -59,10 +59,13 @@ ai-config-sync check
 ### Global Options
 
 ```bash
---config, -c    Override config directory path
---help, -h      Show help
---version, -v   Show version
+--config, -c           Override config directory path
+--check-public-updates Check for skill updates from GitHub (makes API calls)
+--help, -h             Show help
+--version, -v          Show version
 ```
+
+By default, the tool does **not** check GitHub for skill updates — this avoids making an API call per skill on every run. Pass `--check-public-updates` when you want to see if newer versions of your fetched skills are available.
 
 ## Configuration
 
@@ -138,7 +141,7 @@ skills:
     category: primary
     disable-model-invocation: false
     last_fetched: null
-    last_sync: null
+    sync_hash: null
 
   # Skill from GitHub
   - name: mcp-builder
@@ -146,8 +149,10 @@ skills:
     category: contextual
     disable-model-invocation: true
     last_fetched: "2025-01-15T00:00:00.000Z"
-    last_sync: "2025-01-15T00:00:00.000Z"
+    sync_hash: a3f8c2d1e9b047...
 ```
+
+`sync_hash` is an MD5 hash of the skill's `SKILL.md` content, written after each sync. It replaces the older `last_sync` timestamp — hash comparison is deterministic across machines, so pulling this file via git and running on another machine won't trigger spurious re-syncs.
 
 ### plugins-directory.yaml
 
