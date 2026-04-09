@@ -16,6 +16,11 @@ CLI tool for managing AI assistant skills, plugins, MCP servers, and rules acros
 
 ```bash
 npm install -g ai-config-sync
+
+# OR
+
+npx ai-config-sync readme
+npx ai-config-sync init
 ```
 
 Or from source:
@@ -30,6 +35,9 @@ npm link  # Makes `ai-config-sync` available globally
 ## Quick Start
 
 ```bash
+# See README
+ai-config-sync readme
+
 # First-time setup - creates ~/.ai-config-sync
 ai-config-sync init
 
@@ -55,6 +63,7 @@ ai-config-sync check
 | `ai-config-sync rules` | Sync rules to targets |
 | `ai-config-sync catalog` | Regenerate skill catalog |
 | `ai-config-sync zip [name]` | Zip skills for Claude Desktop upload |
+| `ai-config-sync migrate-config` | Migrate config to latest format version |
 
 ### Global Options
 
@@ -74,6 +83,8 @@ By default, the tool does **not** check GitHub for skill updates — this avoids
 The tool stores its configuration at `~/.ai-config-sync`:
 
 ```yaml
+version: 2
+
 # Source directories (read-only, contain skill/plugin definitions)
 # Listed in priority order - first source wins on conflicts
 source-directories:
@@ -84,12 +95,10 @@ source-directories:
 config-directory: ~/workspace/ai-config/merged
 
 # Override default target paths (optional)
-# Each target can have: skills (path), rules (path), mcp (true/false)
+# claude-code is an array (supports multiple instances); other targets are objects
 targets:
   claude-code:
-    skills: ~/.claude/skills
-    rules: ~/.claude/rules
-    mcp: true
+    - mcp: true                      # Default instance (~/.claude)
   codex:
     skills: ~/.codex/skills
     rules: ~/.codex
@@ -167,13 +176,21 @@ marketplaces:
     source: wshobson/agents
 
 plugins:
-  - name: superpowers
+  - name: context7
+    marketplace: claude-plugins-official
+    category: core
+
+  - name: code-review
     marketplace: claude-plugins-official
     category: core
 
   - name: typescript-lsp
     marketplace: claude-plugins-official
     category: lsp
+
+  - name: accessibility-compliance
+    marketplace: claude-code-workflows
+    category: workflows
 ```
 
 ### mcp-directory.yaml
@@ -183,7 +200,7 @@ servers:
   # stdio server - runs a local command
   - name: context7
     command: npx
-    args: ["-y", "@anthropic/context7-mcp"]
+    args: ["-y", "@upstash/context7-mcp@latest"]
 
   # stdio server with environment variables
   - name: github-mcp
@@ -220,6 +237,53 @@ MCP servers sync to the targets enabled in `~/.ai-config-sync`. Default target i
 | `cursor` | File merge | `~/.cursor/mcp.json` |
 | `gemini` | File merge | `~/.gemini/settings.json` |
 
+### Multi-Instance Claude Code
+
+You can run multiple Claude Code installations (e.g., personal and work) by using the `CLAUDE_CONFIG_DIR` environment variable. ai-config-sync supports syncing skills, rules, and MCP servers to each instance independently.
+
+**Requires config v2.** Run `ai-config-sync migrate-config` to upgrade from v1.
+
+In v2 format, the `claude-code` target is always an array:
+
+```yaml
+version: 2
+targets:
+  claude-code:
+    - mcp: true                          # "default" instance, uses ~/.claude
+    - name: work
+      config-dir: ~/.claude-work
+      mcp: true
+```
+
+Each entry supports these fields:
+
+| Field | Default | Description |
+|---|---|---|
+| `name` | `"default"` | Instance identifier (used in state, CLI output, `--target` filtering) |
+| `config-dir` | `~/.claude` | Claude config directory |
+| `mcp` | `false` | Whether to sync MCP servers to this instance |
+| `skills` | `<config-dir>/skills` | Override skills path |
+| `rules` | `<config-dir>/rules` | Override rules path |
+
+All instances share the same rules sources (`rules/claude-code/` in source directories). State is tracked independently per instance (e.g., `claude-code` and `claude-code:work` in state files).
+
+For MCP sync, non-default instances use `CLAUDE_CONFIG_DIR=<config-dir>` when calling the Claude CLI.
+
+**Caveats:**
+- `CLAUDE_CONFIG_DIR` is not officially documented by Anthropic. Behavior may change. See GitHub issues [#25762](https://github.com/anthropics/claude-code/issues/25762) and [#28808](https://github.com/anthropics/claude-code/issues/28808).
+- The VS Code extension's `/ide` command does not work with custom config directories (it hardcodes `~/.claude/ide/`).
+- Claude Code still creates local `.claude/` directories in workspaces for `settings.local.json`, regardless of `CLAUDE_CONFIG_DIR`.
+
+### Config Version Migration
+
+Configs without a `version` field are v1 (the original format). To upgrade:
+
+```bash
+ai-config-sync migrate-config
+```
+
+This wraps `targets.claude-code` in an array and adds `version: 2`. All other fields are preserved. The v1 format continues to work for single-instance setups.
+
 ## Usage Examples
 
 ### Add a skill from GitHub
@@ -238,6 +302,7 @@ ai-config-sync sync
 
 ```bash
 ai-config-sync fetch
+ai-config-sync fetch --force     # Re-fetch all, ignoring timestamps
 ai-config-sync catalog
 ai-config-sync sync
 ```
@@ -253,6 +318,7 @@ ai-config-sync sync claude,codex
 
 ```bash
 ai-config-sync sync --clean
+ai-config-sync sync --force      # Force re-sync to all targets
 ```
 
 ### Install missing plugins
@@ -270,6 +336,7 @@ ai-config-sync mcp               # Sync servers to all targets
 ai-config-sync mcp --dry-run     # Preview changes
 ai-config-sync mcp --clean       # Also remove servers no longer in directory
 ai-config-sync mcp --replace     # Replace all servers with changed configs
+ai-config-sync mcp --force       # Force re-sync all (clears state, implies --replace)
 ```
 
 ### Sync rules
@@ -278,6 +345,7 @@ ai-config-sync mcp --replace     # Replace all servers with changed configs
 ai-config-sync rules
 ai-config-sync rules --dry-run
 ai-config-sync rules --clean
+ai-config-sync rules --force     # Force re-sync all (clears state, rewrites all files)
 ```
 
 ## How It Works
@@ -339,6 +407,7 @@ When `disable-model-invocation: true` is set in skills-directory.yaml:
 
 The `samples/` directory contains example configurations:
 
+- `ai-config-sync.v2.example.yaml` - Example v2 config with multi-instance Claude Code
 - `skills-directory.example.yaml` - Example skill registry
 - `plugins-directory.example.yaml` - Example plugin registry
 - `mcp-directory.example.yaml` - Example MCP server registry

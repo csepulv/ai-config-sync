@@ -9,36 +9,81 @@
 #   ai-config-sync catalog       # Regenerate skill catalog
 
 skills:
-  # Custom skills (source: custom) are managed locally, not fetched
-  - name: my-custom-skill
+  # Custom skills (source: custom) are managed locally in your skills/ folder
+  - name: skill-advisor
     source: custom
     category: primary
     disable-model-invocation: false
     last_fetched: null
-    last_sync: null
+    sync_hash: null
 
   # Skills from Anthropic's official repo
   - name: mcp-builder
     source: https://github.com/anthropics/skills/tree/main/skills/mcp-builder
     category: contextual
-    disable-model-invocation: true
+    disable-model-invocation: false
     last_fetched: null
-    last_sync: null
+    sync_hash: null
 
   - name: frontend-design
     source: https://github.com/anthropics/skills/tree/main/skills/frontend-design
     category: contextual
-    disable-model-invocation: true
+    disable-model-invocation: false
     last_fetched: null
-    last_sync: null
+    sync_hash: null
+
+  - name: pdf
+    source: https://github.com/anthropics/skills/tree/main/skills/pdf
+    category: contextual
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
+
+  # Community skills — wshobson/agents marketplace
+  - name: javascript-testing-patterns
+    source: https://github.com/wshobson/agents/tree/main/plugins/javascript-typescript/skills/javascript-testing-patterns
+    category: primary
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
+
+  - name: monorepo-management
+    source: https://github.com/wshobson/agents/tree/main/plugins/developer-essentials/skills/monorepo-management
+    category: contextual
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
+
+  # Community skills — obra/superpowers
+  - name: systematic-debugging
+    source: https://github.com/obra/superpowers/tree/main/skills/systematic-debugging
+    category: contextual
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
+
+  - name: verification-before-completion
+    source: https://github.com/obra/superpowers/tree/main/skills/verification-before-completion
+    category: contextual
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
 
   # Pin to specific commit for stability
-  - name: debugging-strategies
-    source: https://github.com/wshobson/agents/tree/abc123def/plugins/developer-essentials/skills/debugging-strategies
+  - name: react-modernization
+    source: https://github.com/wshobson/agents/tree/abc123def/plugins/framework-migration/skills/react-modernization
+    category: contextual
+    disable-model-invocation: false
+    last_fetched: null
+    sync_hash: null
+
+  # disable-model-invocation: true prevents auto-invocation — user must use /skill-name
+  - name: code-review-excellence
+    source: https://github.com/wshobson/agents/tree/main/plugins/developer-essentials/skills/code-review-excellence
     category: contextual
     disable-model-invocation: true
     last_fetched: null
-    last_sync: null
+    sync_hash: null
 
 # Field descriptions:
 #
@@ -54,8 +99,10 @@ skills:
 #   - experimental: Testing/development skills
 #
 # disable-model-invocation: If true, prevents the model from auto-invoking
-#                           User must explicitly request the skill
+#                           User must explicitly request the skill with /skill-name
 #
 # last_fetched: Timestamp of last GitHub fetch (auto-updated)
 #
-# last_sync: Timestamp of last sync to targets (auto-updated)
+# sync_hash: MD5 hash of SKILL.md content, written after sync (auto-updated)
+#            Replaces the older last_sync timestamp — hash comparison is
+#            deterministic across machines, avoiding spurious re-syncs after git pull

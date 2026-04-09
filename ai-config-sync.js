@@ -8,7 +8,17 @@ import { hideBin } from 'yargs/helpers';
 
 import { generateCatalog } from './lib/catalog.js';
 import { runAllChecks } from './lib/check.js';
-import { CONFIG_FILE, expandPath, loadConfig, saveConfig } from './lib/config.js';
+import {
+  CONFIG_FILE,
+  CURRENT_CONFIG_VERSION,
+  ensureConfigDirectory,
+  expandPath,
+  getConfigVersion,
+  loadConfig,
+  migrateConfig,
+  saveConfig,
+  warnMissingSourceDirectories
+} from './lib/config.js';
 import { addSkill, copyCustomSkills, fetchAllSkills, isGhCliAvailable } from './lib/fetch.js';
 import { importMcpServers, removeMcpServersFromTargets } from './lib/mcp-manage.js';
 import { syncMcp } from './lib/mcp.js';
@@ -118,8 +128,9 @@ servers: []
     console.log(`  ✓ Created mcp-directory.yaml`);
   }
 
-  // Save config with new structure
+  // Save config with v2 structure
   const config = {
+    version: CURRENT_CONFIG_VERSION,
     'source-directories': [sourcePath],
     'config-directory': configPath
   };
@@ -136,7 +147,18 @@ async function getConfig(_overridePath) {
   if (!config) {
     throw new Error(`Config not found at ${CONFIG_FILE}. Run 'ai-config-sync init' first.`);
   }
+
+  const version = getConfigVersion(config);
+  if (version < CURRENT_CONFIG_VERSION) {
+    console.warn(
+      `⚠ Config format v${version} detected. Run 'ai-config-sync migrate-config' to upgrade to v${CURRENT_CONFIG_VERSION}.`
+    );
+    console.warn('  Multi-instance Claude Code targets require v2 format.\n');
+  }
+
   // TODO: Support --config override for config-directory
+  await ensureConfigDirectory(config);
+  await warnMissingSourceDirectories(config);
   return config;
 }
 
@@ -394,7 +416,7 @@ async function interactiveMode(config, options = {}) {
 
 // ============ Fetch Command ============
 
-async function fetchCommand(config, skillName) {
+async function fetchCommand(config, skillName, options = {}) {
   if (isGhCliAvailable()) {
     console.log('Using authenticated GitHub CLI (gh)\n');
   } else {
@@ -402,7 +424,7 @@ async function fetchCommand(config, skillName) {
     console.log('Tip: Install gh CLI and run "gh auth login" for higher rate limits\n');
   }
 
-  await fetchAllSkills(config, { skillName });
+  await fetchAllSkills(config, { skillName, force: options.force });
   console.log('\nDone!');
 }
 
@@ -430,18 +452,18 @@ async function pluginsCommand(config, clean, dryRun) {
 
 // ============ MCP Command ============
 
-async function mcpCommand(config, clean, dryRun, replace) {
-  const results = await syncMcp(config, { clean, dryRun, replace });
+async function mcpCommand(config, clean, dryRun, replace, force) {
+  const results = await syncMcp(config, { clean, dryRun, replace, force });
 
-  if (!replace && !dryRun) {
+  if (!replace && !force && !dryRun) {
     await promptSkippedServerReplace(results, config);
   }
 }
 
 // ============ Rules Command ============
 
-async function rulesCommand(config, clean, dryRun) {
-  await syncRules(config, { clean, dryRun });
+async function rulesCommand(config, clean, dryRun, force) {
+  await syncRules(config, { clean, dryRun, force });
 }
 
 // ============ Catalog Command ============
@@ -493,6 +515,24 @@ const cli = yargs(hideBin(process.argv))
   .command('init', 'Initialize ai-config-sync configuration', {}, async () => {
     await initCommand();
   })
+  .command('migrate-config', 'Migrate config to latest format version', {}, async () => {
+    const config = await loadConfig();
+    if (!config) {
+      console.error(`Config not found at ${CONFIG_FILE}. Run 'ai-config-sync init' first.`);
+      process.exit(1);
+    }
+
+    const version = getConfigVersion(config);
+    if (version >= CURRENT_CONFIG_VERSION) {
+      console.log(`Config is already at v${version}. No migration needed.`);
+      return;
+    }
+
+    console.log(`Migrating config from v${version} to v${CURRENT_CONFIG_VERSION}...`);
+    const migrated = migrateConfig(config);
+    await saveConfig(migrated);
+    console.log(`Config migrated and saved to ${CONFIG_FILE}`);
+  })
   .command('check', 'Check status (no prompts, exit code)', {}, async (argv) => {
     const config = await getConfig(argv.config);
     await checkCommand(config, { checkGitHub: argv.checkPublicUpdates });
@@ -501,14 +541,20 @@ const cli = yargs(hideBin(process.argv))
     ['fetch [name]', 'f'],
     'Fetch skills from GitHub',
     (yargs) => {
-      return yargs.positional('name', {
-        type: 'string',
-        description: 'Specific skill name to fetch'
-      });
+      return yargs
+        .positional('name', {
+          type: 'string',
+          description: 'Specific skill name to fetch'
+        })
+        .option('force', {
+          type: 'boolean',
+          default: false,
+          description: 'Force re-fetch/copy, ignoring timestamps'
+        });
     },
     async (argv) => {
       const config = await getConfig(argv.config);
-      await fetchCommand(config, argv.name);
+      await fetchCommand(config, argv.name, { force: argv.force });
     }
   )
   .command(
@@ -550,6 +596,11 @@ const cli = yargs(hideBin(process.argv))
           type: 'boolean',
           default: false,
           description: 'Remove orphaned skills from targets'
+        })
+        .option('force', {
+          type: 'boolean',
+          default: false,
+          description: 'Force re-sync to all targets'
         });
     },
     async (argv) => {
@@ -593,6 +644,11 @@ const cli = yargs(hideBin(process.argv))
           default: false,
           description: 'Replace existing servers at CLI targets (remove then re-add)'
         })
+        .option('force', {
+          type: 'boolean',
+          default: false,
+          description: 'Force re-sync all servers (clears state, implies --replace)'
+        })
         .option('dry-run', {
           type: 'boolean',
           default: false,
@@ -601,7 +657,7 @@ const cli = yargs(hideBin(process.argv))
     },
     async (argv) => {
       const config = await getConfig(argv.config);
-      await mcpCommand(config, argv.clean, argv.dryRun, argv.replace);
+      await mcpCommand(config, argv.clean, argv.dryRun, argv.replace, argv.force);
     }
   )
   .command(
@@ -614,6 +670,11 @@ const cli = yargs(hideBin(process.argv))
           default: false,
           description: 'Remove rules no longer in sources'
         })
+        .option('force', {
+          type: 'boolean',
+          default: false,
+          description: 'Force re-sync all rules (clears state, rewrites all files)'
+        })
         .option('dry-run', {
           type: 'boolean',
           default: false,
@@ -622,7 +683,7 @@ const cli = yargs(hideBin(process.argv))
     },
     async (argv) => {
       const config = await getConfig(argv.config);
-      await rulesCommand(config, argv.clean, argv.dryRun);
+      await rulesCommand(config, argv.clean, argv.dryRun, argv.force);
     }
   )
   .command('readme', 'Show the README', {}, async () => {

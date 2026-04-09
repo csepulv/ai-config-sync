@@ -17,11 +17,7 @@ marketplaces:
     source: wshobson/agents
 
 plugins:
-  # Claude Official Plugins
-  - name: superpowers
-    marketplace: claude-plugins-official
-    category: core
-
+  # Claude Official — core
   - name: context7
     marketplace: claude-plugins-official
     category: core
@@ -29,6 +25,36 @@ plugins:
   - name: code-review
     marketplace: claude-plugins-official
     category: core
+
+  - name: feature-dev
+    marketplace: claude-plugins-official
+    category: core
+
+  - name: frontend-design
+    marketplace: claude-plugins-official
+    category: core
+
+  - name: code-simplifier
+    marketplace: claude-plugins-official
+    category: core
+
+  # Claude Official — LSP
+  - name: typescript-lsp
+    marketplace: claude-plugins-official
+    category: lsp
+
+  - name: pyright-lsp
+    marketplace: claude-plugins-official
+    category: lsp
+
+  # Community workflow plugins (wshobson/agents)
+  - name: accessibility-compliance
+    marketplace: claude-code-workflows
+    category: workflows
+
+  - name: cicd-automation
+    marketplace: claude-code-workflows
+    category: workflows
 
 # Field descriptions:
 #

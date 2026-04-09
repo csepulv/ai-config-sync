@@ -1,27 +1,37 @@
 # MCP Server Directory - Example Configuration
 #
 # This file defines MCP (Model Context Protocol) servers to sync across AI tools.
-# Servers defined here are synced to all targets listed in mcp-targets in ~/.ai-config-sync.
+# Servers are synced to targets enabled in ~/.ai-config-sync (v2 format uses
+# targets with mcp: true per target).
 #
 # Usage:
 #   ai-config-sync mcp              # Sync MCP servers to targets
 #   ai-config-sync mcp --clean      # Also remove servers no longer listed
 #   ai-config-sync mcp --dry-run    # Preview changes without applying
 #
-# Configure targets in ~/.ai-config-sync:
-#   mcp-targets:
-#     - claude-code       # Uses `claude mcp` CLI
-#     - claude-desktop    # ~/Library/Application Support/Claude/claude_desktop_config.json
-#     - cursor            # ~/.cursor/mcp.json
-#     - gemini            # ~/.gemini/settings.json
+# Enable MCP sync per target in ~/.ai-config-sync:
+#   targets:
+#     claude-code:
+#       - mcp: true                  # Uses `claude mcp` CLI
+#     claude-desktop:
+#       mcp: true                    # ~/Library/Application Support/Claude/claude_desktop_config.json
+#     cursor:
+#       mcp: true                    # ~/.cursor/mcp.json
+#     gemini:
+#       mcp: true                    # ~/.gemini/settings.json
 #
-# Default target (if mcp-targets not set): claude-code
+# Default target (if targets not configured): claude-code
 
 servers:
   # stdio server - runs a local command
   - name: context7
     command: npx
-    args: ["-y", "@anthropic/context7-mcp"]
+    args: ["-y", "@upstash/context7-mcp@latest"]
+
+  # stdio server with --headless flag
+  - name: chrome-devtools
+    command: npx
+    args: ["-y", "chrome-devtools-mcp@latest", "--headless"]
 
   # stdio server with environment variables using $VAR expansion
   - name: github-mcp

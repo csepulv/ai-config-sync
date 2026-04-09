@@ -1,0 +1,46 @@
+# ai-config-sync configuration (v2 format)
+# Location: ~/.ai-config-sync
+# Migrate from v1: ai-config-sync migrate-config
+
+version: 2
+
+# Source directories (read-only, contain skill/plugin/mcp/rules definitions)
+# Listed in priority order - first source wins on conflicts
+source-directories:
+  - ~/workspace/ai-config/personal
+  - ~/workspace/ai-config/team
+
+# Config directory (where merged/fetched skills are stored)
+config-directory: ~/workspace/ai-config/merged
+
+# Targets — where skills, rules, and MCP servers get synced
+# claude-code is always an array (supports multiple instances)
+targets:
+  claude-code:
+    - mcp: true                          # "default" instance, uses ~/.claude
+
+    # Uncomment to add a second Claude Code instance:
+    # - name: work
+    #   config-dir: ~/.claude-work       # Skills → ~/.claude-work/skills, rules → ~/.claude-work/rules
+    #   mcp: true                        # MCP sync uses CLAUDE_CONFIG_DIR=~/.claude-work
+
+  codex:
+    skills: ~/.codex/skills
+    rules: ~/.codex
+
+  gemini:
+    skills: ~/.gemini/skills
+    rules: ~/.gemini
+    mcp: true
+
+  claude-desktop:
+    mcp: true
+
+  cursor:
+    mcp: true
+
+# Machine-local variable overrides for MCP server definitions
+# Values here take precedence over environment variables
+mcp-vars:
+  # GITHUB_TOKEN: ghp_your_token
+  # SLACK_BOT_TOKEN: xoxb-...
