@@ -1,7 +1,7 @@
 {
   "name": "ai-config-sync",
-  "version": "1.0.1",
-  "description": "CLI tool for managing AI assistant skills and plugins across Claude, Codex, Cursor, and Gemini",
+  "version": "1.0.2",
+  "description": "DEPRECATED: renamed to agent-sync. See https://github.com/csepulv/save-the-tokens/tree/main/tools/agent-sync",
   "type": "module",
   "main": "ai-config-sync.js",
   "bin": {
@@ -38,12 +38,13 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/csepulv/ai-config-sync.git"
+    "url": "git+https://github.com/csepulv/save-the-tokens.git",
+    "directory": "tools/agent-sync"
   },
   "bugs": {
-    "url": "https://github.com/csepulv/ai-config-sync/issues"
+    "url": "https://github.com/csepulv/save-the-tokens/issues"
   },
-  "homepage": "https://github.com/csepulv/ai-config-sync#readme",
+  "homepage": "https://github.com/csepulv/save-the-tokens/tree/main/tools/agent-sync#readme",
   "engines": {
     "node": ">=18.0.0"
   },
