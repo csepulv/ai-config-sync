@@ -1,7 +1,7 @@
 {
   "name": "ai-config-sync",
-  "version": "1.0.2",
-  "description": "DEPRECATED: renamed to agent-sync. See https://github.com/csepulv/save-the-tokens/tree/main/tools/agent-sync",
+  "version": "1.0.3",
+  "description": "DEPRECATED: renamed to @csepulv/agent-sync. See https://github.com/csepulv/save-the-tokens/tree/main/tools/agent-sync",
   "type": "module",
   "main": "ai-config-sync.js",
   "bin": {
